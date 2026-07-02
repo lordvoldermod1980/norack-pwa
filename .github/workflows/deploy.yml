@@ -1,7 +1,7 @@
 # Build norack-pwa and deploy to GitHub Pages on every push to main.
 # One-time setup in the repo: Settings → Pages → Source = "GitHub Actions".
 # The app is a client-side SPA with no build secrets (auth is a runtime login; backend defaults to CF,
-# switchable in the login screen). Site: https://lordvoldermod1980.github.io/norack-pwa-/
+# switchable in the login screen). Site: https://lordvoldermod1980.github.io/norack-pwa/
 name: Deploy to GitHub Pages
 
 on:
