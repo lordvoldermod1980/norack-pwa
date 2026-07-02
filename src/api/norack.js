@@ -130,7 +130,8 @@ export async function customerLookup(q) {
 
 // ── bills ─────────────────────────────────────────────────────────────────────
 export async function getOpenBills(customerId) {
-  const q = customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''
+  // limit=1000 so the rack plan loads every bill (backend default is only 200 → would silently drop bills).
+  const q = customerId ? `?customer_id=${encodeURIComponent(customerId)}&limit=1000` : '?limit=1000'
   const d = await apiGet(`/api/bills${q}`)
   return { status: 'ok', bills: (d.bills || []).map(billToThai) }
 }
