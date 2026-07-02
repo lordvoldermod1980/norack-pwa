@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* ── NO.Rack Design Tokens ─────────────────────────────── */
+:root {
+  /* Brand: emerald */
+  --brand-50:  #E4F4EF; --brand-100: #C3E8D8; --brand-200: #92D5B9;
+  --brand-300: #57BD96; --brand-400: #2BA678; --brand-500: #1F9D6B;
+  --brand-600: #157A52; --brand-700: #0F6342; --brand-800: #0A4A32; --brand-900: #063222;
+
+  /* Neutrals */
+  --white: #FFFFFF; --gray-50: #F6F8F7; --gray-100: #EEF1F0;
+  --gray-200: #E2E7E5; --gray-300: #CACFCD; --gray-400: #9BA3A0;
+  --gray-500: #6E7572; --gray-600: #515855; --gray-700: #3A403D;
+  --gray-800: #262B29; --gray-900: #161A18;
+
+  /* Status */
+  --amber-50: #FDF3E2; --amber-500: #E08A0B; --amber-700: #9A5C04;
+  --green-50: #E8F5E9; --green-500: #4CAF50; --green-700: #2E7D32;
+  --blue-50:  #E8F0FE; --blue-500:  #2F6FED; --blue-700:  #1B4AAE;
+  --red-50:   #FCEAEB; --red-500:   #E5484D; --red-700:   #A11D22;
+
+  /* Semantic surfaces */
+  --surface-app:     var(--gray-50);
+  --surface-card:    var(--white);
+  --surface-sunken:  var(--gray-100);
+  --surface-inverse: var(--brand-600);
+
+  /* Text */
+  --text-strong:   var(--gray-900);
+  --text-body:     var(--gray-700);
+  --text-muted:    var(--gray-500);
+  --text-faint:    var(--gray-400);
+  --text-on-brand: var(--white);
+  --text-brand:    var(--brand-700);
+
+  /* Borders */
+  --border-subtle:  var(--gray-200);
+  --border-default: var(--gray-300);
+  --border-strong:  var(--gray-400);
+  --border-brand:   var(--brand-500);
+  --focus-ring:     var(--brand-400);
+
+  /* Brand aliases */
+  --brand:       var(--brand-600);
+  --brand-hover: var(--brand-700);
+  --brand-press: var(--brand-800);
+  --brand-tint:  var(--brand-50);
+
+  /* Status pills */
+  --status-open-fg: var(--amber-700); --status-open-bg: var(--amber-50); --status-open-dot: var(--amber-500);
+  --status-done-fg: var(--green-700); --status-done-bg: var(--green-50); --status-done-dot: var(--green-500);
+  --status-recv-fg: var(--gray-600);  --status-recv-bg: var(--gray-100); --status-recv-dot: var(--gray-400);
+
+  /* Feedback */
+  --success: var(--green-500);
+  --warning: var(--amber-500);
+  --danger:  var(--red-500);
+  --info:    var(--blue-500);
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans Thai', 'Noto Sans Thai', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --fw-light: 300; --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+  --fs-display: 30px; --fs-title: 22px; --fs-heading: 18px;
+  --fs-body: 16px; --fs-sub: 14px; --fs-caption: 13px;
+  --lh-tight: 1.2; --lh-snug: 1.35; --lh-normal: 1.55;
+
+  /* Spacing (4px grid) */
+  --space-1: 4px;  --space-2: 8px;   --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px;  --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px;
+
+  /* Radii */
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+  --radius-xl: 22px; --radius-pill: 999px;
+
+  /* Touch */
+  --tap-min: 48px; --tap-large: 56px;
+  --field-height: 52px; --appbar-height: 56px; --tabbar-height: 64px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(22,22,28,0.06);
+  --shadow-sm: 0 1px 3px rgba(22,22,28,0.08), 0 1px 2px rgba(22,22,28,0.04);
+  --shadow-md: 0 4px 12px rgba(22,22,28,0.08), 0 2px 4px rgba(22,22,28,0.04);
+  --shadow-lg: 0 12px 28px rgba(30,27,73,0.14), 0 4px 8px rgba(22,22,28,0.06);
+  --shadow-brand: 0 6px 16px rgba(31,157,107,0.30);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2,0,0,1);
+  --ease-out: cubic-bezier(0,0,0.2,1);
+  --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
+}
+
+@keyframes norack-spin    { to { transform: rotate(360deg); } }
+@keyframes norack-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@keyframes norack-fade-up { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--surface-app);
+  color: var(--text-body);
+}
+
+#root { min-height: 100dvh; }
