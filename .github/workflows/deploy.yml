@@ -27,7 +27,10 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      # Backup host: default the API target to Deno (you usually land here because CF is down). base stays /norack-pwa/.
       - run: npm run build
+        env:
+          VITE_API_BACKEND: deno
       - run: cp dist/index.html dist/404.html # SPA fallback (GitHub Pages has no server-side routing)
       - uses: actions/upload-pages-artifact@v3
         with:

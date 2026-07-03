@@ -41,12 +41,24 @@ export function currentUser() {
   try { return JSON.parse(localStorage.getItem('norack_user') || 'null') } catch { return null }
 }
 
-// ── core request (Bearer + auto-failover to the other runtime on a NETWORK error only) ──
+// ── core request (Bearer + auto-failover to the other runtime) ───────────────────
+// GET is idempotent → fail over on a network error, a timeout, OR a 5xx. Writes (POST/DELETE) fail over on a
+// NETWORK error only: a 5xx (or a timeout) might mean the write already applied to the shared Turso, so
+// retrying the other runtime could double-apply. On the request that finally succeeds we announce the
+// effective backend (`norack-backend-active`) so the header can reveal a silent failover.
+const REQUEST_TIMEOUT_MS = 10000
+const announceBackend = (b) => window.dispatchEvent(new CustomEvent('norack-backend-active', { detail: b }))
+
 async function apiCall(method, path, body) {
   const token = getToken()
   const order = getBackend() === 'deno' ? ['deno', 'cf'] : ['cf', 'deno']
-  let netErr
-  for (const b of order) {
+  const isWrite = method !== 'GET' && method !== 'HEAD'
+  let lastErr
+  for (let i = 0; i < order.length; i++) {
+    const b = order[i]
+    const hasFallback = i < order.length - 1
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS)
     let r
     try {
       r = await fetch(`${baseUrl(b)}${path}`, {
@@ -56,23 +68,36 @@ async function apiCall(method, path, body) {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: ctl.signal,
       })
     } catch (e) {
-      netErr = e
-      continue // network/CORS/host down → try the other backend
+      clearTimeout(timer)
+      lastErr = e
+      const isTimeout = e?.name === 'AbortError'
+      // GET → fail over on any transport failure. Write → only on a genuine network error (not a timeout,
+      // which is ambiguous about whether the server applied it).
+      if (hasFallback && (!isWrite || !isTimeout)) continue
+      throw new Error(isTimeout ? 'เซิร์ฟเวอร์ตอบช้าเกินไป' : 'ติดต่อเซิร์ฟเวอร์ไม่ได้ทั้งสองที่', { cause: e })
     }
+    clearTimeout(timer)
     if (r.status === 401) {
       logout()
       window.dispatchEvent(new Event('norack-unauth'))
       throw new Error('unauthorized')
     }
+    // 5xx: fail over ONLY for idempotent GETs (a write might already be applied on the shared DB).
+    if (r.status >= 500 && !isWrite && hasFallback) {
+      lastErr = new Error(`HTTP ${r.status}`)
+      continue
+    }
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
       throw new Error(e.error || `HTTP ${r.status}`)
     }
+    announceBackend(b)
     return r.json().catch(() => ({}))
   }
-  throw netErr || new Error('ติดต่อเซิร์ฟเวอร์ไม่ได้ทั้งสองที่')
+  throw lastErr || new Error('ติดต่อเซิร์ฟเวอร์ไม่ได้ทั้งสองที่')
 }
 const apiGet = (p) => apiCall('GET', p)
 const apiPost = (p, b) => apiCall('POST', p, b)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -120,6 +120,37 @@ function Clock() {
     return () => clearInterval(id)
   }, [])
   return <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>{now}</div>
+}
+
+// ─── backend switch (CF ↔ Deno) + live status ─────────────────────────────────
+// Flip the API target without logging out. The dot shows which backend actually served the last request
+// (green = CF primary, amber = Deno backup); the border turns amber if a silent auto-failover kicked in.
+function BackendSwitch() {
+  const [sel, setSel] = useState(getBackend())
+  const [active, setActive] = useState(getBackend())
+  useEffect(() => {
+    const onActive = (e) => setActive(e.detail)
+    window.addEventListener('norack-backend-active', onActive)
+    return () => window.removeEventListener('norack-backend-active', onActive)
+  }, [])
+  const change = (e) => { const b = e.target.value; setBackend(b); setSel(b); setActive(b) }
+  const failedOver = active !== sel
+  const dot = active === 'deno' ? '#fbbf24' : '#4ade80'
+  return (
+    <div title={`กำลังใช้: ${BACKEND_LABELS[active] || active}${failedOver ? ' (สลับอัตโนมัติ)' : ''}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px',
+        background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
+        border: `1.5px solid ${failedOver ? '#fbbf24' : 'rgba(255,255,255,0.25)'}` }}>
+      <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flexShrink: 0, boxShadow: `0 0 0 3px ${dot}33` }} />
+      <select value={sel} onChange={change} title="เลือกเซิร์ฟเวอร์"
+        style={{ background: 'transparent', color: '#fff', border: 'none', outline: 'none', cursor: 'pointer',
+          fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+        {Object.entries(BACKEND_LABELS).map(([k, label]) => (
+          <option key={k} value={k} style={{ color: '#000' }}>{label}</option>
+        ))}
+      </select>
+    </div>
+  )
 }
 
 // ─── date field — always shows dd/mm/yyyy, calendar icon on right opens picker ──
@@ -1307,6 +1338,7 @@ export default function TabletDashboard() {
                 background: 'rgba(255,255,255,0.12)', color: '#fff', outline: 'none' }} />
           </div>
         )}
+        <BackendSwitch />
         <Clock />
         <button onClick={() => { loadBills(true); if (nav === 'customers') loadCustomers('') }} title="รีเฟรช" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
           <Icon name="refresh" size={20} color="#fff" />

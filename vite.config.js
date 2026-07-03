@@ -11,12 +11,5 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-    proxy: {
-      '/webhook': {
-        target: 'https://n8nlocal.winterarmy.net',
-        changeOrigin: true,
-        secure: true,
-      },
-    },
   },
 })
