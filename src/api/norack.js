@@ -162,6 +162,10 @@ export async function getReview() {
 // Push this customer's NO.Rack id into Loyverse customer_code (semi-auto write-back).
 export const syncCustomer = (customerId) => apiPost(`/api/customers/${encodeURIComponent(customerId)}/sync-loyverse`)
 
+// ── backup export (Phase 10c) — full DB snapshot for the "สำรองข้อมูล" button ────
+// Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
+export const exportBackup = () => apiGet('/api/export/backup')
+
 // ── bills ─────────────────────────────────────────────────────────────────────
 export async function getOpenBills(customerId) {
   // limit=1000 so the rack plan loads every bill (backend default is only 200 → would silently drop bills).

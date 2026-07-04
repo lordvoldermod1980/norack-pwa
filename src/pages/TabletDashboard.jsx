@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
 import PhotoThumb from '../components/PhotoThumb'
 import NRButton from '../components/NRButton'
+import { saveBackupXlsx } from '../lib/exportXlsx'
 
 // ─── data helpers ─────────────────────────────────────────────────────────────
 
@@ -1022,6 +1023,7 @@ function EditBillModal({ bill, detail, onClose, onSaved }) {
 export default function TabletDashboard() {
   // shared
   const [nav, setNav]       = useState('register')
+  const [exporting, setExporting] = useState(false)
   const [bills, setBills]   = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal]       = useState(null) // null | { prefillCustId: string }
@@ -1312,6 +1314,23 @@ export default function TabletDashboard() {
   }, [bills])
   const selBill = bills.find(b => b.rack === selRack) || null
 
+  // สำรองข้อมูล: ดึง snapshot ทั้ง DB (decrypt หลัง auth) → สร้าง .xlsx text-typed (ไม่เพี้ยน) → save dialog
+  // (เลือกที่เก็บในเครื่อง หรือโฟลเดอร์ที่ sync กับ Google Drive). ดู src/lib/exportXlsx.js + backend /api/export/backup.
+  async function handleExport() {
+    if (exporting) return
+    try {
+      setExporting(true)
+      const payload = await exportBackup()
+      const { filename } = await saveBackupXlsx(payload)
+      const m = payload?.meta || {}
+      alert(`สำรองข้อมูลแล้ว: ${filename}\nลูกค้า ${m.customers} · บิล ${m.bills} · ตำแหน่ง ${m.bill_positions}`)
+    } catch (e) {
+      if (e?.name !== 'AbortError') alert('สำรองข้อมูลไม่สำเร็จ: ' + (e?.message || e))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div style={{ width: '100vw', height: '100dvh', display: 'flex', flexDirection: 'column', background: 'var(--surface-app)', fontFamily: 'var(--font-sans)', overflow: 'hidden' }}>
 
@@ -1365,6 +1384,9 @@ export default function TabletDashboard() {
         <Clock />
         <button onClick={() => { loadBills(true); if (nav === 'customers') loadCustomers(''); if (nav === 'sync') loadReview() }} title="รีเฟรช" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
           <Icon name="refresh" size={20} color="#fff" />
+        </button>
+        <button onClick={handleExport} disabled={exporting} title="สำรองข้อมูล (Export .xlsx)" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: exporting ? 'wait' : 'pointer', opacity: exporting ? 0.6 : 1 }}>
+          <Icon name="download" size={20} color="#fff" />
         </button>
       </header>
 

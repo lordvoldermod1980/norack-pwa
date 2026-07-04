@@ -16,6 +16,7 @@ const PATHS = {
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   chevron:  '<path d="m9 18 6-6-6-6"/>',
   x:        '<path d="M18 6 6 18M6 6l12 12"/>',
+  download: '<path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/>',
 }
 
 export default function Icon({ name, size = 22, color = 'currentColor', strokeWidth = 2, style }) {
