@@ -166,6 +166,11 @@ export const syncCustomer = (customerId) => apiPost(`/api/customers/${encodeURIC
 // Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
 export const exportBackup = () => apiGet('/api/export/backup')
 
+// ── restore/import (Phase 10b) — INSERT-MISSING only (never overwrites live data) ─
+// preview → returns { preview: {...counts} } without writing; apply → inserts the missing rows.
+export const importPreview = (sheets) => apiPost('/api/import', { dryRun: true, sheets })
+export const importApply = (sheets) => apiPost('/api/import', { dryRun: false, sheets })
+
 // ── bills ─────────────────────────────────────────────────────────────────────
 export async function getOpenBills(customerId) {
   // limit=1000 so the rack plan loads every bill (backend default is only 200 → would silently drop bills).

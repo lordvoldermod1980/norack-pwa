@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup, importPreview, importApply } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
 import PhotoThumb from '../components/PhotoThumb'
 import NRButton from '../components/NRButton'
 import { saveBackupXlsx } from '../lib/exportXlsx'
+import { parseBackupXlsx } from '../lib/importXlsx'
 
 // ─── data helpers ─────────────────────────────────────────────────────────────
 
@@ -1024,6 +1025,8 @@ export default function TabletDashboard() {
   // shared
   const [nav, setNav]       = useState('register')
   const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const importInputRef = useRef(null)
   const [bills, setBills]   = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal]       = useState(null) // null | { prefillCustId: string }
@@ -1331,6 +1334,35 @@ export default function TabletDashboard() {
     }
   }
 
+  // กู้ข้อมูลจากไฟล์ backup (.xlsx) — โหมด "insert-missing" ปลอดภัย: เพิ่มเฉพาะแถวที่หาย ไม่ทับ/ไม่ revert ของเดิม.
+  // อ่านไฟล์ → ขอ preview (ยังไม่เขียน) → ให้ยืนยันจำนวน → ค่อยเขียนจริง. ดู src/lib/importXlsx.js + backend /api/import.
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // reset ให้เลือกไฟล์เดิมซ้ำได้
+    if (!file) return
+    try {
+      setImporting(true)
+      const sheets = await parseBackupXlsx(file)
+      const p = (await importPreview(sheets)).preview || {}
+      const cNew = p.customers?.new ?? 0, bNew = p.bills?.new ?? 0, posNew = p.bill_positions?.new ?? 0
+      if (cNew === 0 && bNew === 0) { alert('ไม่มีข้อมูลใหม่ที่ต้องเพิ่ม — ทุกอย่างในไฟล์มีอยู่ในระบบแล้ว'); return }
+      const msg = 'กู้ข้อมูล (โหมดปลอดภัย: เพิ่มเฉพาะที่หาย ไม่ทับของเดิม)\n\n'
+        + `• ลูกค้าใหม่ที่จะเพิ่ม: ${cNew}  (ข้ามที่มีอยู่แล้ว ${p.customers?.existing ?? 0})\n`
+        + `• บิลใหม่ที่จะเพิ่ม: ${bNew}  (ข้ามที่มีอยู่แล้ว ${p.bills?.existing ?? 0})\n`
+        + `• ตำแหน่งราวใหม่: ${posNew}\n`
+        + (p.bills?.orphan ? `\n⚠️ บิล ${p.bills.orphan} ใบไม่พบลูกค้าในระบบ → จะเพิ่มแบบไม่มีเจ้าของ\n` : '')
+        + '\nยืนยันเพิ่มข้อมูลเหล่านี้?'
+      if (!window.confirm(msg)) return
+      const r = (await importApply(sheets)).inserted || {}
+      alert(`กู้ข้อมูลสำเร็จ ✓\nเพิ่มลูกค้า ${r.customers?.new ?? 0} · บิล ${r.bills?.new ?? 0} · ตำแหน่ง ${r.bill_positions?.new ?? 0}`)
+      loadBills(true); if (nav === 'customers') loadCustomers('')
+    } catch (err) {
+      alert('กู้ข้อมูลไม่สำเร็จ: ' + (err?.message || err))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div style={{ width: '100vw', height: '100dvh', display: 'flex', flexDirection: 'column', background: 'var(--surface-app)', fontFamily: 'var(--font-sans)', overflow: 'hidden' }}>
 
@@ -1387,6 +1419,10 @@ export default function TabletDashboard() {
         </button>
         <button onClick={handleExport} disabled={exporting} title="สำรองข้อมูล (Export .xlsx)" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: exporting ? 'wait' : 'pointer', opacity: exporting ? 0.6 : 1 }}>
           <Icon name="download" size={20} color="#fff" />
+        </button>
+        <input ref={importInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleImportFile} />
+        <button onClick={() => importInputRef.current?.click()} disabled={importing} title="กู้ข้อมูลจากไฟล์ backup (.xlsx) — เพิ่มเฉพาะที่หาย" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: importing ? 'wait' : 'pointer', opacity: importing ? 0.6 : 1 }}>
+          <Icon name="upload" size={20} color="#fff" />
         </button>
       </header>
 

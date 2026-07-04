@@ -17,6 +17,7 @@ const PATHS = {
   chevron:  '<path d="m9 18 6-6-6-6"/>',
   x:        '<path d="M18 6 6 18M6 6l12 12"/>',
   download: '<path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/>',
+  upload:   '<path d="M12 21V9"/><path d="m7 13 5-5 5 5"/><path d="M5 3h14"/>',
 }
 
 export default function Icon({ name, size = 22, color = 'currentColor', strokeWidth = 2, style }) {
