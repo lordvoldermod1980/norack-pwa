@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -1055,6 +1055,10 @@ export default function TabletDashboard() {
   // search tab
   const [searchQ, setSearchQ] = useState('')
 
+  // sync tab — new customers pending Loyverse write-back + same-phone duplicate warnings
+  const [review, setReview] = useState([])
+  const [syncingId, setSyncingId] = useState('')
+
   // global error toast
   const [toast, setToast]   = useState('')
   const toastTimer          = useRef(null)
@@ -1110,12 +1114,30 @@ export default function TabletDashboard() {
   // Real-time sync via POLLING (SSE removed — see docs/phase6-frontend-cutover.md). Refresh the bill list
   // every 5s while the tab is visible so POS-receipt status changes appear; skipping hidden tabs keeps us
   // well under the Cloudflare Workers free-tier daily request budget.
+  // "ลูกค้าใหม่" review feed (new customers pending Loyverse write-back + same-phone duplicates).
+  const loadReview = useCallback(async () => {
+    try { setReview(await getReview()) } catch { /* keep previous list on a transient error */ }
+  }, [])
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadReview() }, [loadReview])
+
+  const handleSync = useCallback(async (customerId) => {
+    setSyncingId(customerId)
+    try {
+      await syncCustomer(customerId)
+      notify('บันทึก Customer ID เข้า Loyverse สำเร็จ')
+      await loadReview()
+    } catch (e) {
+      notify(e?.message === 'unauthorized' ? 'เซสชันหมดอายุ' : (e?.message || 'sync ไม่สำเร็จ'))
+    } finally { setSyncingId('') }
+  }, [loadReview, notify])
+
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') loadBills(false)
+      if (document.visibilityState === 'visible') { loadBills(false); loadReview() }
     }, 5000)
     return () => clearInterval(timer)
-  }, [loadBills])
+  }, [loadBills, loadReview])
 
   // load customers (call with '' to load all, or q to filter)
   const loadCustomers = useCallback(async (q = '') => {
@@ -1251,6 +1273,7 @@ export default function TabletDashboard() {
     { key: 'register',  icon: 'receipt', label: 'ทะเบียน', sheet: 'Master register' },
     { key: 'receive',   icon: 'camera',  label: 'รับผ้า',  sheet: 'Work_Recieve' },
     { key: 'status',    icon: 'search',  label: 'ค้นหา',   sheet: 'ค้นหา' },
+    { key: 'sync',      icon: 'refresh', label: 'ลูกค้าใหม่', sheet: 'ลูกค้าใหม่ / รอ sync เข้า Loyverse' },
   ]
 
   // React Compiler memoize ให้อัตโนมัติ — ไม่ต้อง useMemo เอง
@@ -1340,7 +1363,7 @@ export default function TabletDashboard() {
         )}
         <BackendSwitch />
         <Clock />
-        <button onClick={() => { loadBills(true); if (nav === 'customers') loadCustomers('') }} title="รีเฟรช" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
+        <button onClick={() => { loadBills(true); if (nav === 'customers') loadCustomers(''); if (nav === 'sync') loadReview() }} title="รีเฟรช" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
           <Icon name="refresh" size={20} color="#fff" />
         </button>
       </header>
@@ -1353,6 +1376,7 @@ export default function TabletDashboard() {
             const on = it.key === nav
             return (
               <button key={it.key} onClick={() => handleNav(it.key)} style={{
+                position: 'relative',
                 width: 64, height: 60, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-lg)',
                 background: on ? 'var(--brand-tint)' : 'transparent',
                 color: on ? 'var(--text-brand)' : 'var(--text-muted)',
@@ -1362,6 +1386,13 @@ export default function TabletDashboard() {
               }}>
                 <Icon name={it.icon} size={24} />
                 {it.label}
+                {it.key === 'sync' && review.length > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 6, right: 10, minWidth: 18, height: 18, padding: '0 5px',
+                    borderRadius: 9, background: 'var(--danger, #e5484d)', color: '#fff',
+                    fontSize: 11, fontWeight: 700, lineHeight: '18px', textAlign: 'center',
+                  }}>{review.length}</span>
+                )}
               </button>
             )
           })}
@@ -1409,6 +1440,9 @@ export default function TabletDashboard() {
             onQ={setSearchQ}
             onViewBill={(rackId) => { selectBill(rackId); setNav('register') }}
           />
+        )}
+        {nav === 'sync' && (
+          <ReviewView customers={review} syncingId={syncingId} onSync={handleSync} />
         )}
       </div>
 
@@ -1531,6 +1565,56 @@ const BillRow = memo(function BillRow({ b, selected, onSelect }) {
     </div>
   )
 })
+
+// "ลูกค้าใหม่" tab — new customers (pending/failed Loyverse write-back) with a ⚠️ same-phone duplicate hint.
+// One [Sync] button per row so staff review each duplicate warning before writing customer_code to Loyverse.
+function ReviewView({ customers, syncingId, onSync }) {
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-5)' }}>
+      <div style={{ marginBottom: 'var(--space-4)' }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-strong)' }}>ลูกค้าใหม่ / รอ sync เข้า Loyverse</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+          กด <b>Sync</b> เพื่อบันทึก Customer ID กลับเข้า Loyverse · <span style={{ color: 'var(--danger, #e5484d)' }}>⚠️</span> = เบอร์ซ้ำกับลูกค้าเดิม (ตรวจก่อน sync)
+        </div>
+      </div>
+      {customers.length === 0 ? (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)', fontSize: 15 }}>ไม่มีลูกค้าใหม่รอ sync</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', maxWidth: 720 }}>
+          {customers.map(c => {
+            const dup = c.duplicates && c.duplicates.length > 0
+            return (
+              <div key={c.customer_id} style={{
+                display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+                padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)',
+                border: `1px solid ${dup ? 'var(--danger, #e5484d)' : 'var(--border-subtle)'}`, background: 'var(--surface-card)',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>{c.name || '—'}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-muted)' }}>
+                    {c.phone || '—'} · <span style={{ fontSize: 11 }}>{c.customer_id}</span>
+                  </div>
+                  {dup && (
+                    <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--danger, #e5484d)', fontWeight: 500 }}>
+                      ⚠️ เบอร์ซ้ำกับ: {c.duplicates.map(d => `${d.name || '—'} (${String(d.customer_id).slice(-6)})`).join(', ')}
+                    </div>
+                  )}
+                  {c.sync_status === 'failed' && c.sync_error && (
+                    <div style={{ marginTop: 4, fontSize: 12, color: 'var(--danger, #e5484d)' }}>sync ล้มเหลว: {c.sync_error}</div>
+                  )}
+                </div>
+                <NRButton size="sm" variant={dup ? 'outline' : 'primary'} loading={syncingId === c.customer_id}
+                  iconLeft={<Icon name="refresh" size={16} />} onClick={() => onSync(c.customer_id)}>
+                  Sync
+                </NRButton>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function RegisterView({ bills, loading, filter, onFilter, onBulkDelete, selRack, selBill, onSelect, detail, detailLoading, actionLoading, onAction, onDone, onAddPhoto, onEdit, onDelete }) {
   const FILTERS = [

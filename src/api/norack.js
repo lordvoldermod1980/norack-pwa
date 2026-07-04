@@ -153,6 +153,15 @@ export async function customerLookup(q) {
   return { status: 'ok', customers: customers.map(custAlias) }
 }
 
+// ── customer sync (Loyverse write-back) — the "ลูกค้าใหม่" review tab ─────────────
+// New (pending/failed) customers, each with same-phone duplicates[] so staff can spot a re-added customer.
+export async function getReview() {
+  const d = await apiGet('/api/customers/review')
+  return (d.customers || []).map((c) => ({ ...custAlias(c), duplicates: c.duplicates || [] }))
+}
+// Push this customer's NO.Rack id into Loyverse customer_code (semi-auto write-back).
+export const syncCustomer = (customerId) => apiPost(`/api/customers/${encodeURIComponent(customerId)}/sync-loyverse`)
+
 // ── bills ─────────────────────────────────────────────────────────────────────
 export async function getOpenBills(customerId) {
   // limit=1000 so the rack plan loads every bill (backend default is only 200 → would silently drop bills).
