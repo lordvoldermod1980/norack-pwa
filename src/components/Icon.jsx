@@ -18,6 +18,7 @@ const PATHS = {
   x:        '<path d="M18 6 6 18M6 6l12 12"/>',
   download: '<path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/>',
   upload:   '<path d="M12 21V9"/><path d="m7 13 5-5 5 5"/><path d="M5 3h14"/>',
+  logout:   '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
 }
 
 export default function Icon({ name, size = 22, color = 'currentColor', strokeWidth = 2, style }) {

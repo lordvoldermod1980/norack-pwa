@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup, importPreview, importApply } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -1316,6 +1316,7 @@ export default function TabletDashboard() {
     return m
   }, [bills])
   const selBill = bills.find(b => b.rack === selRack) || null
+  const me = currentUser()
 
   // สำรองข้อมูล: ดึง snapshot ทั้ง DB (decrypt หลัง auth) → สร้าง .xlsx text-typed (ไม่เพี้ยน) → save dialog
   // (เลือกที่เก็บในเครื่อง หรือโฟลเดอร์ที่ sync กับ Google Drive). ดู src/lib/exportXlsx.js + backend /api/export/backup.
@@ -1423,6 +1424,14 @@ export default function TabletDashboard() {
         <input ref={importInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleImportFile} />
         <button onClick={() => importInputRef.current?.click()} disabled={importing} title="กู้ข้อมูลจากไฟล์ backup (.xlsx) — เพิ่มเฉพาะที่หาย" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: importing ? 'wait' : 'pointer', opacity: importing ? 0.6 : 1 }}>
           <Icon name="upload" size={20} color="#fff" />
+        </button>
+        {me && (
+          <span title={me.username || ''} style={{ fontSize: 13, color: 'rgba(255,255,255,0.72)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {me.display_name || me.username || ''}
+          </span>
+        )}
+        <button onClick={() => { if (window.confirm('ออกจากระบบ?')) signOut() }} title="ออกจากระบบ" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
+          <Icon name="logout" size={20} color="#fff" />
         </button>
       </header>
 

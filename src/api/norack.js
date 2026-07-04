@@ -25,6 +25,11 @@ export function logout() {
   localStorage.removeItem('norack_token')
   localStorage.removeItem('norack_user')
 }
+// Manual logout from the UI: clear the token and drop back to the login screen (AuthGate listens for this).
+export function signOut() {
+  logout()
+  window.dispatchEvent(new Event('norack-unauth'))
+}
 export async function login(username, password) {
   const r = await fetch(`${baseUrl(getBackend())}/api/auth/login`, {
     method: 'POST',
