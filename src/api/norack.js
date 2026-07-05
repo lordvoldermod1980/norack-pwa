@@ -178,6 +178,16 @@ export async function getReview() {
 // Push this customer's NO.Rack id into Loyverse customer_code (semi-auto write-back).
 export const syncCustomer = (customerId) => apiPost(`/api/customers/${encodeURIComponent(customerId)}/sync-loyverse`)
 
+// Staff MANUAL add — smart create/adopt in Loyverse + generate id (fallback for customers the POS→webhook
+// path missed, e.g. created during the cutover gap). Backend returns { ok, mode:'created'|'adopted', customer }
+// on success, or { duplicate:[{customer_id,name}] } when the phone already matches a tracked customer —
+// retry with force=true to override. Clears the client customer cache so the new one is searchable at once.
+export async function createCustomer(name, tel, force = false) {
+  const r = await apiPost('/api/customers', { name, tel, force })
+  if (r && r.ok) clearCustomerCache()
+  return r
+}
+
 // ── backup export (Phase 10c) — full DB snapshot for the "สำรองข้อมูล" button ────
 // Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
 export const exportBackup = () => apiGet('/api/export/backup')

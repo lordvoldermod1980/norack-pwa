@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -1137,6 +1137,29 @@ export default function TabletDashboard() {
     } finally { setSyncingId('') }
   }, [loadReview, notify])
 
+  // Manual add (fallback for customers the POS→webhook path missed). On a same-phone duplicate the backend
+  // returns { duplicate } → confirm before forcing. Returns a normalized result the form uses to reset/show it.
+  const handleAddCustomer = useCallback(async (name, tel) => {
+    try {
+      let res = await createCustomer(name, tel, false)
+      if (res?.duplicate?.length) {
+        const list = res.duplicate.map(d => `• ${d.name || '—'} (${String(d.customer_id).slice(-6)})`).join('\n')
+        if (!window.confirm(`เบอร์ ${tel} ซ้ำกับลูกค้าที่มีอยู่แล้ว:\n${list}\n\nยืนยันเพิ่มลูกค้าใหม่นี้แยกอีกคน?`)) return { cancelled: true }
+        res = await createCustomer(name, tel, true)
+      }
+      if (res?.ok && res.customer) {
+        notify(`เพิ่มลูกค้าสำเร็จ · ${res.mode === 'adopted' ? 'พบใน Loyverse—เขียน ID กลับ' : 'สร้างใหม่ใน Loyverse'} · ${res.customer.customer_id}`)
+        await loadReview()
+        return { ok: true, mode: res.mode, customer: res.customer }
+      }
+      notify(res?.error ? `เพิ่มไม่สำเร็จ: ${res.error}` : 'เพิ่มลูกค้าไม่สำเร็จ')
+      return { error: res?.error || 'failed' }
+    } catch (e) {
+      notify(e?.message === 'unauthorized' ? 'เซสชันหมดอายุ' : (e?.message || 'เพิ่มลูกค้าไม่สำเร็จ'))
+      return { error: e?.message || 'failed' }
+    }
+  }, [loadReview, notify])
+
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') { loadBills(false); loadReview() }
@@ -1509,7 +1532,7 @@ export default function TabletDashboard() {
           />
         )}
         {nav === 'sync' && (
-          <ReviewView customers={review} syncingId={syncingId} onSync={handleSync} />
+          <ReviewView customers={review} syncingId={syncingId} onSync={handleSync} onAdd={handleAddCustomer} />
         )}
       </div>
 
@@ -1633,50 +1656,114 @@ const BillRow = memo(function BillRow({ b, selected, onSelect }) {
   )
 })
 
-// "ลูกค้าใหม่" tab — new customers (pending/failed Loyverse write-back) with a ⚠️ same-phone duplicate hint.
-// One [Sync] button per row so staff review each duplicate warning before writing customer_code to Loyverse.
-function ReviewView({ customers, syncingId, onSync }) {
+// "ลูกค้าใหม่" tab — TWO panes (mirrors CustomerView): LEFT = manual "add customer" form (fallback for
+// customers the POS→webhook path missed — generates a NO.Rack id + writes it into Loyverse contacts).
+// RIGHT = customers pending/failed Loyverse write-back with a ⚠️ same-phone duplicate hint + per-row [Sync].
+function ReviewView({ customers, syncingId, onSync, onAdd }) {
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-5)' }}>
-      <div style={{ marginBottom: 'var(--space-4)' }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-strong)' }}>ลูกค้าใหม่ / รอ sync เข้า Loyverse</div>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
-          กด <b>Sync</b> เพื่อบันทึก Customer ID กลับเข้า Loyverse · <span style={{ color: 'var(--danger, #e5484d)' }}>⚠️</span> = เบอร์ซ้ำกับลูกค้าเดิม (ตรวจก่อน sync)
+    <>
+      {/* LEFT — add a customer */}
+      <section style={{ flex: 1, minWidth: 0, borderRight: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface-card)', overflowY: 'auto' }}>
+        <AddCustomerForm onAdd={onAdd} />
+      </section>
+
+      {/* RIGHT — pending Loyverse sync */}
+      <section style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--border-subtle)', overflowY: 'auto', padding: 'var(--space-5)', background: 'var(--surface-app)' }}>
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-strong)' }}>รายชื่อลูกค้า รอ sync เข้า Loyverse</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+            กด <b>Sync</b> เพื่อบันทึก Customer ID กลับเข้า Loyverse · <span style={{ color: 'var(--danger, #e5484d)' }}>⚠️</span> = เบอร์ซ้ำกับลูกค้าเดิม (ตรวจก่อน sync)
+          </div>
         </div>
-      </div>
-      {customers.length === 0 ? (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)', fontSize: 15 }}>ไม่มีลูกค้าใหม่รอ sync</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', maxWidth: 720 }}>
-          {customers.map(c => {
-            const dup = c.duplicates && c.duplicates.length > 0
-            return (
-              <div key={c.customer_id} style={{
-                display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
-                padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)',
-                border: `1px solid ${dup ? 'var(--danger, #e5484d)' : 'var(--border-subtle)'}`, background: 'var(--surface-card)',
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>{c.name || '—'}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-muted)' }}>
-                    {c.phone || '—'} · <span style={{ fontSize: 11 }}>{c.customer_id}</span>
-                  </div>
-                  {dup && (
-                    <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--danger, #e5484d)', fontWeight: 500 }}>
-                      ⚠️ เบอร์ซ้ำกับ: {c.duplicates.map(d => `${d.name || '—'} (${String(d.customer_id).slice(-6)})`).join(', ')}
+        {customers.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-faint)', fontSize: 15 }}>ไม่มีลูกค้าใหม่รอ sync</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', maxWidth: 720 }}>
+            {customers.map(c => {
+              const dup = c.duplicates && c.duplicates.length > 0
+              return (
+                <div key={c.customer_id} style={{
+                  display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+                  padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)',
+                  border: `1px solid ${dup ? 'var(--danger, #e5484d)' : 'var(--border-subtle)'}`, background: 'var(--surface-card)',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>{c.name || '—'}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-muted)' }}>
+                      {c.phone || '—'} · <span style={{ fontSize: 11 }}>{c.customer_id}</span>
                     </div>
-                  )}
-                  {c.sync_status === 'failed' && c.sync_error && (
-                    <div style={{ marginTop: 4, fontSize: 12, color: 'var(--danger, #e5484d)' }}>sync ล้มเหลว: {c.sync_error}</div>
-                  )}
+                    {dup && (
+                      <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--danger, #e5484d)', fontWeight: 500 }}>
+                        ⚠️ เบอร์ซ้ำกับ: {c.duplicates.map(d => `${d.name || '—'} (${String(d.customer_id).slice(-6)})`).join(', ')}
+                      </div>
+                    )}
+                    {c.sync_status === 'failed' && c.sync_error && (
+                      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--danger, #e5484d)' }}>sync ล้มเหลว: {c.sync_error}</div>
+                    )}
+                  </div>
+                  <NRButton size="sm" variant={dup ? 'outline' : 'primary'} loading={syncingId === c.customer_id}
+                    iconLeft={<Icon name="refresh" size={16} />} onClick={() => onSync(c.customer_id)}>
+                    Sync
+                  </NRButton>
                 </div>
-                <NRButton size="sm" variant={dup ? 'outline' : 'primary'} loading={syncingId === c.customer_id}
-                  iconLeft={<Icon name="refresh" size={16} />} onClick={() => onSync(c.customer_id)}>
-                  Sync
-                </NRButton>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
+        )}
+      </section>
+    </>
+  )
+}
+
+// LEFT pane of the "ลูกค้าใหม่" tab — manual add. Generates a Customer ID + writes it into the customer's
+// Loyverse contact (backend adopts an existing contact by phone, or creates a new one). onAdd resolves the
+// duplicate-confirm + toast; here we just drive the form and show the last result.
+function AddCustomerForm({ onAdd }) {
+  const [name, setName] = useState('')
+  const [tel, setTel] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState(null) // { mode, id } of the last successful add
+  const inp = {
+    width: '100%', boxSizing: 'border-box', height: 48, padding: '0 14px',
+    border: '1.5px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+    fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-body)',
+    background: 'var(--surface-app)', color: 'var(--text-body)', outline: 'none',
+  }
+  const canSubmit = name.trim() && tel.trim() && !submitting
+  async function submit() {
+    if (!canSubmit) return
+    setSubmitting(true)
+    try {
+      const r = await onAdd(name.trim(), tel.trim())
+      if (r?.ok && r.customer) { setResult({ mode: r.mode, id: r.customer.customer_id }); setName(''); setTel('') }
+    } finally { setSubmitting(false) }
+  }
+  return (
+    <div style={{ padding: 'var(--space-6)', maxWidth: 460 }}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-strong)' }}>เพิ่มลูกค้า</div>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 'var(--space-5)' }}>
+        สร้าง Customer ID ให้ลูกค้าที่ POS ยังไม่ได้ส่งเข้าระบบ แล้วเขียน ID กลับเข้า Loyverse ให้อัตโนมัติ
+      </div>
+
+      <label style={{ display: 'block', fontSize: 14, color: 'var(--text-muted)', marginBottom: 6 }}>ชื่อลูกค้า</label>
+      <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="เช่น คุณสมชาย"
+        onKeyDown={e => { if (e.key === 'Enter') submit() }} style={{ ...inp, marginBottom: 'var(--space-4)' }} />
+
+      <label style={{ display: 'block', fontSize: 14, color: 'var(--text-muted)', marginBottom: 6 }}>เบอร์โทร</label>
+      <input value={tel} onChange={e => setTel(e.target.value)} placeholder="08xxxxxxxx" inputMode="tel"
+        onKeyDown={e => { if (e.key === 'Enter') submit() }} style={{ ...inp, fontFamily: 'var(--font-mono)', marginBottom: 'var(--space-5)' }} />
+
+      <NRButton block size="lg" variant="primary" disabled={!canSubmit} loading={submitting}
+        iconLeft={<Icon name="plus" size={18} color="#fff" />} onClick={submit}>
+        เพิ่มลูกค้า
+      </NRButton>
+
+      {result && (
+        <div style={{ marginTop: 'var(--space-5)', padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--brand-100)', background: 'var(--brand-tint)' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>
+            ✓ เพิ่มลูกค้าสำเร็จ · {result.mode === 'adopted' ? 'พบใน Loyverse—เขียน ID กลับ' : 'สร้างใหม่ใน Loyverse'}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, color: 'var(--text-strong)', marginTop: 4 }}>{result.id}</div>
         </div>
       )}
     </div>
