@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { login, isAuthed, getBackend, setBackend, BACKEND_LABELS } from '../api/norack'
+import { login, isAuthed, getBackend, setBackend, BACKEND_LABELS, refreshToken } from '../api/norack'
 
 // Wraps the app: shows a login screen until a Bearer token exists. Listens for `norack-unauth`
 // (fired by the API adapter on a 401) to drop back to login. See docs/phase6-frontend-cutover.md.
@@ -10,6 +10,25 @@ export default function AuthGate({ children }) {
     window.addEventListener('norack-unauth', onUnauth)
     return () => window.removeEventListener('norack-unauth', onUnauth)
   }, [])
+  // Sliding session keep-alive: slide the 7-day token on app load, when the tab becomes visible again
+  // (throttled to ≥1h so quick tab-flips don't spam it), and every 6h. If the session was revoked
+  // (token_version bumped / disabled) the refresh returns 401 → apiCall fires `norack-unauth` → back to login.
+  useEffect(() => {
+    if (!authed) return
+    let last = 0
+    const MIN_GAP_MS = 60 * 60 * 1000
+    const slide = () => { last = Date.now(); refreshToken() }
+    slide()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - last > MIN_GAP_MS) slide()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const id = setInterval(slide, 6 * 60 * 60 * 1000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(id)
+    }
+  }, [authed])
   if (authed) return children
   return <LoginScreen onAuthed={() => setAuthed(true)} />
 }

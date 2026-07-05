@@ -45,6 +45,17 @@ export async function login(username, password) {
 export function currentUser() {
   try { return JSON.parse(localStorage.getItem('norack_user') || 'null') } catch { return null }
 }
+// Sliding session: swap the stored token for a fresh 7-day one. Called on app load / tab-visible / every
+// few hours (AuthGate) so a daily-used tablet never has to log in again. If the session was revoked
+// (token_version bumped / disabled) the backend returns 401 → apiCall clears the token and fires
+// `norack-unauth`, dropping the user to the login screen. Never throws (best-effort keep-alive).
+export async function refreshToken() {
+  try {
+    const d = await apiPost('/api/auth/refresh')
+    if (d?.token) localStorage.setItem('norack_token', d.token)
+    return true
+  } catch { return false }
+}
 
 // ── core request (Bearer + auto-failover to the other runtime) ───────────────────
 // GET is idempotent → fail over on a network error, a timeout, OR a 5xx. Writes (POST/DELETE) fail over on a
