@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, deleteCustomer, getStaffList, setStaffPerms, can, isAdmin, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -1340,6 +1340,22 @@ export default function TabletDashboard() {
   }, [bills])
   const selBill = bills.find(b => b.rack === selRack) || null
   const me = currentUser()
+  const [permsOpen, setPermsOpen] = useState(false) // gear ⚙️ permissions popup (admin only)
+
+  // Delete a customer from NO.Rack (Turso only). Blocked by the backend if the customer has bills (409).
+  const handleDeleteCustomer = useCallback(async (cust) => {
+    if (!cust) return
+    if (!window.confirm(`ลบลูกค้า "${cust.name || cust.id}" ออกจาก NO.Rack?\n(ไม่ลบใน Loyverse · ลบเฉพาะระบบนี้)`)) return
+    try {
+      await deleteCustomer(cust.id)
+      notify('ลบลูกค้าแล้ว')
+      setSelCust(null)
+      await loadCustomers(custQ)
+    } catch (e) {
+      if (e?.message === 'has_bills') notify('ลบไม่ได้ — ลูกค้ามีบิลในระบบ (ลบบิลก่อน)')
+      else notify(e?.message === 'unauthorized' ? 'เซสชันหมดอายุ' : (e?.message === 'forbidden' ? 'ไม่มีสิทธิ์ลบลูกค้า' : (e?.message || 'ลบลูกค้าไม่สำเร็จ')))
+    }
+  }, [notify, loadCustomers, custQ])
 
   // สำรองข้อมูล: ดึง snapshot ทั้ง DB (decrypt หลัง auth) → สร้าง .xlsx text-typed (ไม่เพี้ยน) → save dialog
   // (เลือกที่เก็บในเครื่อง หรือโฟลเดอร์ที่ sync กับ Google Drive). ดู src/lib/exportXlsx.js + backend /api/export/backup.
@@ -1448,6 +1464,11 @@ export default function TabletDashboard() {
         <button onClick={() => importInputRef.current?.click()} disabled={importing} title="กู้ข้อมูลจากไฟล์ backup (.xlsx) — เพิ่มเฉพาะที่หาย" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: importing ? 'wait' : 'pointer', opacity: importing ? 0.6 : 1 }}>
           <Icon name="upload" size={20} color="#fff" />
         </button>
+        {isAdmin() && (
+          <button onClick={() => setPermsOpen(true)} title="กำหนดสิทธิ์ staff (แอดมิน)" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
+            <Icon name="settings" size={20} color="#fff" />
+          </button>
+        )}
         {me && (
           <span title={me.username || ''} style={{ fontSize: 13, color: 'rgba(255,255,255,0.72)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {me.display_name || me.username || ''}
@@ -1520,6 +1541,7 @@ export default function TabletDashboard() {
             onSelect={setSelCust}
             onOpenBill={(custId) => openModal(custId)}
             onViewBill={(rackId) => { selectBill(rackId); setNav('register') }}
+            onDelete={handleDeleteCustomer}
           />
         )}
         {nav === 'receive' && <ReceiveView key={receiveRackId} prefillRackId={receiveRackId} prefillCustId={receiveCustId} />}
@@ -1544,6 +1566,8 @@ export default function TabletDashboard() {
           onCreate={handleBillCreated}
         />
       )}
+
+      {permsOpen && <PermissionsModal onClose={() => setPermsOpen(false)} onError={notify} />}
 
       {doning && selBill && (
         <DoneModal
@@ -1662,9 +1686,11 @@ const BillRow = memo(function BillRow({ b, selected, onSelect }) {
 function ReviewView({ customers, syncingId, onSync, onAdd }) {
   return (
     <>
-      {/* LEFT — add a customer */}
+      {/* LEFT — add a customer (needs the add_customer permission) */}
       <section style={{ flex: 1, minWidth: 0, borderRight: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface-card)', overflowY: 'auto' }}>
-        <AddCustomerForm onAdd={onAdd} />
+        {can('add_customer')
+          ? <AddCustomerForm onAdd={onAdd} />
+          : <div style={{ padding: 'var(--space-8)', textAlign: 'center', color: 'var(--text-faint)', fontSize: 15 }}>ไม่มีสิทธิ์เพิ่มลูกค้า<br /><span style={{ fontSize: 13 }}>ให้แอดมินกำหนดสิทธิ์ผ่านไอคอน ⚙️</span></div>}
       </section>
 
       {/* RIGHT — pending Loyverse sync */}
@@ -1953,12 +1979,14 @@ function BillDetailPanel({ bill, detailData, actionLoading, onAction, onDone, on
           style={photos.length === 0 ? { color: '#f97316', borderColor: '#f97316', fontWeight: 700 } : {}}>
           {photos.length === 0 ? 'ยังไม่มีรูป — เพิ่มรูปผ้า' : `เพิ่มรูปผ้า · ${photos.length} รูป`}
         </NRButton>
-        <NRButton variant="outline" size="lg" loading={actionLoading}
-          iconLeft={<Icon name="x" size={20} color="var(--red-700)" />}
-          onClick={() => onDelete(bill.rack)}
-          style={{ color: 'var(--red-700)', borderColor: 'var(--red-300)' }}>
-          ลบบิล
-        </NRButton>
+        {can('delete_bill') && (
+          <NRButton variant="outline" size="lg" loading={actionLoading}
+            iconLeft={<Icon name="x" size={20} color="var(--red-700)" />}
+            onClick={() => onDelete(bill.rack)}
+            style={{ color: 'var(--red-700)', borderColor: 'var(--red-300)' }}>
+            ลบบิล
+          </NRButton>
+        )}
       </div>
     </div>
   )
@@ -1966,7 +1994,88 @@ function BillDetailPanel({ bill, detailData, actionLoading, onAction, onDone, on
 
 // ─── customer view ────────────────────────────────────────────────────────────
 
-const CustomerView = memo(function CustomerView({ bills, billCount, q, customers, searching, selCust, onSelect, onOpenBill, onViewBill }) {
+// Gear ⚙️ popup (admin only) — grant/revoke the 3 gated permissions per staff. Backend enforces via
+// requireAdmin; changes take effect immediately (backend reads perms from Turso per request).
+const PERM_LABELS = { add_customer: 'เพิ่มลูกค้า', delete_customer: 'ลบลูกค้า', delete_bill: 'ลบบิล' }
+function PermissionsModal({ onClose, onError }) {
+  const [staff, setStaff] = useState([])
+  const [allPerms, setAllPerms] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [savingUser, setSavingUser] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try { const d = await getStaffList(); if (alive) { setStaff(d.staff || []); setAllPerms(d.all_perms || []) } }
+      catch (e) { onError?.(e?.message === 'forbidden' ? 'ต้องเป็นแอดมิน' : (e?.message || 'โหลดรายชื่อ staff ไม่สำเร็จ')); onClose() }
+      finally { if (alive) setLoading(false) }
+    })()
+    return () => { alive = false }
+  }, [onClose, onError])
+
+  async function toggle(username, perm, checked) {
+    const s = staff.find(x => x.username === username)
+    if (!s) return
+    const prev = s.perms || []
+    const next = checked ? [...new Set([...prev, perm])] : prev.filter(p => p !== perm)
+    setSavingUser(username)
+    setStaff(list => list.map(x => x.username === username ? { ...x, perms: next } : x)) // optimistic
+    try { await setStaffPerms(username, next) }
+    catch (e) {
+      setStaff(list => list.map(x => x.username === username ? { ...x, perms: prev } : x)) // revert
+      onError?.(e?.message || 'บันทึกสิทธิ์ไม่สำเร็จ')
+    } finally { setSavingUser('') }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(22,26,24,0.55)', backdropFilter: 'blur(4px)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ width: 640, maxWidth: '94vw', maxHeight: '90vh', borderRadius: 'var(--radius-xl)', background: 'var(--surface-card)', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'norack-fade-up var(--dur-base) var(--ease-out)' }}>
+        <div style={{ padding: 'var(--space-5) var(--space-6)', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 700, color: 'var(--text-strong)' }}>กำหนดสิทธิ์ staff</div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>เพิ่ม/ลบลูกค้า และลบบิล · แอดมินมีทุกสิทธิ์เสมอ</div>
+          </div>
+          <button onClick={onClose} title="ปิด" style={{ background: 'var(--surface-app)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
+            <Icon name="x" size={20} />
+          </button>
+        </div>
+        <div style={{ padding: 'var(--space-5) var(--space-6)', overflowY: 'auto' }}>
+          {loading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-8)' }}><Spinner /></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {staff.map(s => (
+                <div key={s.username} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--surface-app)', opacity: s.disabled ? 0.5 : 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>{s.display_name || s.username}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{s.username}{s.role === 'admin' ? ' · แอดมิน' : ''}</div>
+                  </div>
+                  {s.role === 'admin' ? (
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand-600, #2f9e6f)' }}>ทุกสิทธิ์</span>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 'var(--space-4)', flexShrink: 0 }}>
+                      {allPerms.map(p => (
+                        <label key={p} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-body)', cursor: savingUser === s.username ? 'wait' : 'pointer' }}>
+                          <input type="checkbox" checked={(s.perms || []).includes(p)} disabled={savingUser === s.username}
+                            onChange={e => toggle(s.username, p, e.target.checked)}
+                            style={{ width: 18, height: 18, cursor: 'inherit', accentColor: 'var(--brand-500, #2f9e6f)' }} />
+                          {PERM_LABELS[p] || p}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const CustomerView = memo(function CustomerView({ bills, billCount, q, customers, searching, selCust, onSelect, onOpenBill, onViewBill, onDelete }) {
   const cur = customers.find(c => c.id === selCust) || customers[0] || null
   const custBills = cur ? bills.filter(b => b.customer === cur.id) : []
 
@@ -2034,6 +2143,15 @@ const CustomerView = memo(function CustomerView({ bills, billCount, q, customers
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, color: 'var(--text-body)', marginTop: 4 }}>{cur.id} · {cur.tel}</div>
                 </div>
               </div>
+              {can('delete_customer') && (
+                <NRButton size="sm" variant="outline" disabled={custBills.length > 0}
+                  title={custBills.length > 0 ? 'ลบไม่ได้ — ลูกค้ามีบิลในระบบ' : 'ลบลูกค้าออกจาก NO.Rack'}
+                  iconLeft={<Icon name="x" size={16} color={custBills.length > 0 ? 'var(--text-faint)' : 'var(--red-700)'} />}
+                  onClick={() => onDelete(cur)}
+                  style={custBills.length > 0 ? {} : { color: 'var(--red-700)', borderColor: 'var(--red-300)' }}>
+                  ลบลูกค้า
+                </NRButton>
+              )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-4)', background: 'var(--brand-tint)', border: '1px solid var(--brand-100)', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-4)' }}>

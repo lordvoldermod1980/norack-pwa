@@ -45,6 +45,10 @@ export async function login(username, password) {
 export function currentUser() {
   try { return JSON.parse(localStorage.getItem('norack_user') || 'null') } catch { return null }
 }
+// Permission helpers (UX gating only — the backend enforces for real via requirePerm). admin → all perms.
+// perms come from login/refresh (/me) and are stored in norack_user; they refresh on each token slide.
+export function can(perm) { const u = currentUser(); return u?.role === 'admin' || (Array.isArray(u?.perms) && u.perms.includes(perm)) }
+export const isAdmin = () => currentUser()?.role === 'admin'
 // Sliding session: swap the stored token for a fresh 7-day one. Called on app load / tab-visible / every
 // few hours (AuthGate) so a daily-used tablet never has to log in again. If the session was revoked
 // (token_version bumped / disabled) the backend returns 401 → apiCall clears the token and fires
@@ -53,6 +57,7 @@ export async function refreshToken() {
   try {
     const d = await apiPost('/api/auth/refresh')
     if (d?.token) localStorage.setItem('norack_token', d.token)
+    if (d?.user) localStorage.setItem('norack_user', JSON.stringify(d.user)) // pick up any role/perm change
     return true
   } catch { return false }
 }
@@ -187,6 +192,17 @@ export async function createCustomer(name, tel, force = false) {
   if (r && r.ok) clearCustomerCache()
   return r
 }
+// Delete a customer from NO.Rack (Turso) only — does NOT touch Loyverse. Backend 409s if the customer has
+// bills. Requires the 'delete_customer' permission (backend-enforced). Clears the client cache on success.
+export async function deleteCustomer(customerId) {
+  const r = await apiCall('DELETE', `/api/customers/${encodeURIComponent(customerId)}`)
+  if (r && r.ok) clearCustomerCache()
+  return r
+}
+
+// ── admin: staff permission management (gear ⚙️ popup — admin only, backend requireAdmin) ──────────
+export const getStaffList = () => apiGet('/api/admin/staff')
+export const setStaffPerms = (username, perms) => apiPost(`/api/admin/staff/${encodeURIComponent(username)}/perms`, { perms })
 
 // ── backup export (Phase 10c) — full DB snapshot for the "สำรองข้อมูล" button ────
 // Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
