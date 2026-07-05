@@ -1341,21 +1341,26 @@ export default function TabletDashboard() {
   const selBill = bills.find(b => b.rack === selRack) || null
   const me = currentUser()
   const [permsOpen, setPermsOpen] = useState(false) // gear ⚙️ permissions popup (admin only)
+  const [deleteCustTarget, setDeleteCustTarget] = useState(null) // customer pending a type-the-id confirm
+  const [deletingCust, setDeletingCust] = useState(false)
 
-  // Delete a customer from NO.Rack (Turso only). Blocked by the backend if the customer has bills (409).
-  const handleDeleteCustomer = useCallback(async (cust) => {
+  // Delete a customer from NO.Rack (Turso only) — runs after the type-the-id confirm modal. Blocked by the
+  // backend (409 has_bills) if the customer has bills. Does NOT touch Loyverse. (Plain fn — React Compiler
+  // memoizes; a useCallback here can't preserve manual deps because it also calls state setters.)
+  async function doDeleteCustomer(cust) {
     if (!cust) return
-    if (!window.confirm(`ลบลูกค้า "${cust.name || cust.id}" ออกจาก NO.Rack?\n(ไม่ลบใน Loyverse · ลบเฉพาะระบบนี้)`)) return
+    setDeletingCust(true)
     try {
       await deleteCustomer(cust.id)
       notify('ลบลูกค้าแล้ว')
+      setDeleteCustTarget(null)
       setSelCust(null)
       await loadCustomers(custQ)
     } catch (e) {
       if (e?.message === 'has_bills') notify('ลบไม่ได้ — ลูกค้ามีบิลในระบบ (ลบบิลก่อน)')
       else notify(e?.message === 'unauthorized' ? 'เซสชันหมดอายุ' : (e?.message === 'forbidden' ? 'ไม่มีสิทธิ์ลบลูกค้า' : (e?.message || 'ลบลูกค้าไม่สำเร็จ')))
-    }
-  }, [notify, loadCustomers, custQ])
+    } finally { setDeletingCust(false) }
+  }
 
   // สำรองข้อมูล: ดึง snapshot ทั้ง DB (decrypt หลัง auth) → สร้าง .xlsx text-typed (ไม่เพี้ยน) → save dialog
   // (เลือกที่เก็บในเครื่อง หรือโฟลเดอร์ที่ sync กับ Google Drive). ดู src/lib/exportXlsx.js + backend /api/export/backup.
@@ -1541,7 +1546,7 @@ export default function TabletDashboard() {
             onSelect={setSelCust}
             onOpenBill={(custId) => openModal(custId)}
             onViewBill={(rackId) => { selectBill(rackId); setNav('register') }}
-            onDelete={handleDeleteCustomer}
+            onDelete={(cur) => setDeleteCustTarget(cur)}
           />
         )}
         {nav === 'receive' && <ReceiveView key={receiveRackId} prefillRackId={receiveRackId} prefillCustId={receiveCustId} />}
@@ -1593,6 +1598,15 @@ export default function TabletDashboard() {
           loading={actionLoading}
           onConfirm={() => doDelete(deleteTarget)}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {deleteCustTarget && (
+        <DeleteCustomerConfirmModal
+          customer={deleteCustTarget}
+          loading={deletingCust}
+          onConfirm={() => doDeleteCustomer(deleteCustTarget)}
+          onCancel={() => setDeleteCustTarget(null)}
         />
       )}
 
@@ -2735,6 +2749,56 @@ function SearchView({ bills, q, onQ, onViewBill }) {
 }
 
 // ─── delete confirm modal ─────────────────────────────────────────────────────
+
+// Delete a CUSTOMER — same type-the-id-to-confirm friction as the bill delete. Removes from NO.Rack only
+// (never Loyverse). Guarded upstream so it only opens for customers with no bills + delete_customer perm.
+function DeleteCustomerConfirmModal({ customer, loading, onConfirm, onCancel }) {
+  const [input, setInput] = useState('')
+  const match = input.trim() === String(customer.id).trim()
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(22,26,24,0.65)', backdropFilter: 'blur(4px)' }}>
+      <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-8)', width: 400, maxWidth: '90vw', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <Icon name="x" size={22} color="var(--red-700)" />
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-semibold)', color: 'var(--red-700)' }}>ยืนยันลบลูกค้า</span>
+        </div>
+        <div style={{ background: 'var(--red-50)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-sub)', color: 'var(--red-700)' }}>
+          ลบ <b>{customer.name || '—'}</b> ออกจาก NO.Rack ถาวร (ไม่ลบใน Loyverse) — ย้อนกลับไม่ได้
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <label style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-sub)', fontWeight: 'var(--fw-medium)', color: 'var(--text-body)' }}>
+            พิมพ์ Customer ID เพื่อยืนยัน
+          </label>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sub)', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{customer.id}</div>
+          <input
+            autoFocus
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder={customer.id}
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-body)', padding: '10px 14px',
+              border: `1.5px solid ${match ? 'var(--red-500)' : 'var(--border-default)'}`,
+              borderRadius: 'var(--radius-sm)', outline: 'none', width: '100%', boxSizing: 'border-box',
+              background: match ? 'var(--red-50)' : 'var(--surface-card)', color: 'var(--text-strong)',
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
+          <NRButton variant="outline" size="md" onClick={onCancel} disabled={loading}>ยกเลิก</NRButton>
+          <NRButton
+            size="md"
+            loading={loading}
+            disabled={!match || loading}
+            onClick={onConfirm}
+            style={{ background: match ? 'var(--red-500)' : 'var(--gray-300)', color: '#fff', borderColor: 'transparent' }}
+          >
+            ยืนยันลบ
+          </NRButton>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function DeleteConfirmModal({ rackId, loading, onConfirm, onCancel }) {
   const [input, setInput] = useState('')
