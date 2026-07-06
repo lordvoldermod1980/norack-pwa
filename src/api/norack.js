@@ -140,9 +140,13 @@ export const SSE_URL = ''
 // ── customers ─────────────────────────────────────────────────────────────────
 // Phone-ish query → exact blind-index lookup. Anything else (name / id substring) → filter a cached full
 // list client-side (the backend intentionally has no server-side name search; names live encrypted).
+// TTL so customers created/renamed OUTSIDE this device (POS→webhook, another tablet) show up in search
+// within a minute — without it the cache only cleared on this device's own add/delete, i.e. never all day.
+const CUST_CACHE_TTL_MS = 60_000
 let _custCache = null
+let _custCacheAt = 0
 async function allCustomers() {
-  if (_custCache) return _custCache
+  if (_custCache && Date.now() - _custCacheAt < CUST_CACHE_TTL_MS) return _custCache
   const all = []
   for (let offset = 0; ; offset += 500) {
     const d = await apiGet(`/api/customers?limit=500&offset=${offset}`)
@@ -151,9 +155,10 @@ async function allCustomers() {
     if (batch.length < 500) break
   }
   _custCache = all
+  _custCacheAt = Date.now()
   return all
 }
-export function clearCustomerCache() { _custCache = null }
+export function clearCustomerCache() { _custCache = null; _custCacheAt = 0 }
 
 export async function customerLookup(q) {
   const s = String(q ?? '').trim()

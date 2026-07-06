@@ -1209,10 +1209,16 @@ export default function TabletDashboard() {
   }, [loadReview, notify])
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') { loadBills(false); loadReview() }
+    // bills = the POS-receipt real-time path → keep 5s. review (ลูกค้าใหม่) is far heavier server-side
+    // (2-status query + per-row duplicate scan + decrypt) and not time-critical (semi-auto sync waits for
+    // a human anyway) → 30s. Splitting cuts ~43% of polling requests per open tablet.
+    const billsTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') loadBills(false)
     }, 5000)
-    return () => clearInterval(timer)
+    const reviewTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') loadReview()
+    }, 30000)
+    return () => { clearInterval(billsTimer); clearInterval(reviewTimer) }
   }, [loadBills, loadReview])
 
   // load customers (call with '' to load all, or q to filter)
