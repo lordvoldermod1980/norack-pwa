@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, memo } from 'react'
-import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, deleteCustomer, getStaffList, setStaffPerms, can, isAdmin, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
+import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, deleteCustomer, getStaffList, setStaffPerms, getLineWebhook, setLineWebhook, can, isAdmin, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
 import { toStatusKey } from '../lib/status'
@@ -139,14 +139,62 @@ function BackendSwitch() {
   const failedOver = active !== sel
   const dot = active === 'deno' ? '#fbbf24' : '#4ade80'
   return (
-    <div title={`กำลังใช้: ${BACKEND_LABELS[active] || active}${failedOver ? ' (สลับอัตโนมัติ)' : ''}`}
+    <div title={`เว็บ (norack.winterarmy.net) — เฉพาะเครื่องนี้ · กำลังใช้: ${BACKEND_LABELS[active] || active}${failedOver ? ' (สลับอัตโนมัติ)' : ''}`}
       style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px',
         background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
         border: `1.5px solid ${failedOver ? '#fbbf24' : 'rgba(255,255,255,0.25)'}` }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 }}>เว็บ</span>
       <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flexShrink: 0, boxShadow: `0 0 0 3px ${dot}33` }} />
       <select value={sel} onChange={change} title="เลือกเซิร์ฟเวอร์"
         style={{ background: 'transparent', color: '#fff', border: 'none', outline: 'none', cursor: 'pointer',
           fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+        {Object.entries(BACKEND_LABELS).map(([k, label]) => (
+          <option key={k} value={k} style={{ color: '#000' }}>{label}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+// ─── LINE assistant webhook DR switch (admin only) — flips the GLOBAL LINE webhook CF↔Deno via the backend
+// (pre-flight health-checked). Scope = whole bot (not per-browser like the web switch). ──────────────────
+function LineWebhookSwitch() {
+  const [target, setTarget] = useState('')   // '' = loading · cf|deno|other|none
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  useEffect(() => {
+    let alive = true
+    getLineWebhook().then((d) => { if (alive) setTarget(d.target || 'none') }).catch(() => { if (alive) setNote('โหลดสถานะไม่ได้') })
+    return () => { alive = false }
+  }, [])
+  async function change(e) {
+    const t = e.target.value
+    if (!t || t === target || busy) return
+    setBusy(true); setNote('')
+    try {
+      const r = await setLineWebhook(t, false)
+      setTarget(r.target || t); setNote('สลับแล้ว')
+    } catch (err) {
+      if (String(err.message) === 'target_unhealthy') {
+        if (window.confirm(`ปลายทาง "${BACKEND_LABELS[t] || t}" ของบอทยังไม่พร้อม (health check ไม่ผ่าน)\nสลับไปทั้งที่อาจใช้งานไม่ได้?`)) {
+          try { const r2 = await setLineWebhook(t, true); setTarget(r2.target || t); setNote('สลับ (force)') } catch (e2) { setNote(String(e2.message)) }
+        }
+      } else setNote(String(err.message))
+    } finally { setBusy(false) }
+  }
+  const cur = target === 'cf' || target === 'deno' ? target : ''
+  const dot = target === 'deno' ? '#fbbf24' : target === 'cf' ? '#4ade80' : '#9ca3af'
+  return (
+    <div title={`บอท LINE (norack assistant) — ทั้งระบบ · ชี้ไป: ${BACKEND_LABELS[cur] || (target === '' ? 'กำลังโหลด…' : 'อื่น/ไม่ทราบ')}${note ? ' · ' + note : ''}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px',
+        background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
+        border: '1.5px solid rgba(255,255,255,0.25)', opacity: busy ? 0.55 : 1 }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 }}>LINE</span>
+      <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flexShrink: 0, boxShadow: `0 0 0 3px ${dot}33` }} />
+      <select value={cur} onChange={change} disabled={busy || target === ''} title="สลับ backend ของบอท LINE (ทั้งระบบ)"
+        style={{ background: 'transparent', color: '#fff', border: 'none', outline: 'none', cursor: busy ? 'wait' : 'pointer',
+          fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+        {!cur && <option value="" style={{ color: '#000' }}>{target === '' ? '…' : 'อื่น'}</option>}
         {Object.entries(BACKEND_LABELS).map(([k, label]) => (
           <option key={k} value={k} style={{ color: '#000' }}>{label}</option>
         ))}
@@ -1458,6 +1506,7 @@ export default function TabletDashboard() {
           </div>
         )}
         <BackendSwitch />
+        {isAdmin() && <LineWebhookSwitch />}
         <Clock />
         <button onClick={() => { loadBills(true); if (nav === 'customers') loadCustomers(''); if (nav === 'sync') loadReview() }} title="รีเฟรช" style={{ background: 'rgba(255,255,255,0.16)', border: 'none', borderRadius: 'var(--radius-md)', padding: 8, display: 'flex', cursor: 'pointer' }}>
           <Icon name="refresh" size={20} color="#fff" />

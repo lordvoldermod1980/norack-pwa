@@ -204,6 +204,13 @@ export async function deleteCustomer(customerId) {
 export const getStaffList = () => apiGet('/api/admin/staff')
 export const setStaffPerms = (username, perms) => apiPost(`/api/admin/staff/${encodeURIComponent(username)}/perms`, { perms })
 
+// ── admin: LINE assistant webhook DR switch (admin only) — flips the GLOBAL LINE webhook CF↔Deno via the
+// backend (which pre-flight health-tests the target and 409s 'target_unhealthy' unless force). Unlike the
+// per-browser web BackendSwitch, this is one global setting for the whole bot. Works during a CF outage:
+// the POST fails over CF→Deno (network error), so Deno flips the webhook to Deno.
+export const getLineWebhook = () => apiGet('/api/admin/line-webhook')
+export const setLineWebhook = (target, force = false) => apiPost('/api/admin/line-webhook', { target, force })
+
 // ── backup export (Phase 10c) — full DB snapshot for the "สำรองข้อมูล" button ────
 // Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
 export const exportBackup = () => apiGet('/api/export/backup')
