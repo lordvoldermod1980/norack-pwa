@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Icon from './Icon'
-import { getSystemStatus, getErrorCatalog, healWebhook, isAdmin } from '../api/norack'
+import { getSystemStatus, getErrorCatalog, healWebhook, runWatcher, isAdmin } from '../api/norack'
 
 // The "ระบบ" badge — the one place in the header that answers "is anything wrong right now?".
 //
@@ -44,6 +44,7 @@ export default function SystemBadge({ pollMs = 30000 }) {
   const c = COLORS[level] ?? COLORS.unknown
   const codes = status?.codes ?? []
   const canHeal = isAdmin() && codes.includes('C1_LOYVERSE_WEBHOOK_DISABLED')
+  const canRun = isAdmin() && codes.includes('C5_RECONCILE_STALE')
 
   async function onHeal() {
     setHealing(true); setNote('')
@@ -53,6 +54,19 @@ export default function SystemBadge({ pollMs = 30000 }) {
       setStatus(await getSystemStatus())
     } catch (e) {
       setNote(`เปิดคืนไม่สำเร็จ: ${e.message}`)
+    } finally { setHealing(false) }
+  }
+
+  async function onRun() {
+    setHealing(true); setNote('')
+    try {
+      const r = await runWatcher()
+      const cu = r.customers ? `ลูกค้า ${r.customers.upserted}/${r.customers.scanned}` : ''
+      const rc = r.receipts ? ` · ใบเสร็จ ${r.receipts.applied}/${r.receipts.scanned}` : ''
+      setNote(`ดึงข้อมูลแล้ว: ${cu}${rc}`)
+      setStatus(await getSystemStatus())
+    } catch (e) {
+      setNote(`ดึงข้อมูลไม่สำเร็จ: ${e.message}`)
     } finally { setHealing(false) }
   }
 
@@ -88,12 +102,23 @@ export default function SystemBadge({ pollMs = 30000 }) {
             return (
               <div key={code} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{code}</div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{e?.title ?? 'ข้อผิดพลาดที่ไม่รู้จัก'}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  {code === 'C5_RECONCILE_STALE' && status?.reconcile_never_ran
+                    ? 'ตัวดึงข้อมูลย้อนหลังยังไม่เคยรัน (รอบแรกหลัง deploy)'
+                    : e?.title ?? 'ข้อผิดพลาดที่ไม่รู้จัก'}
+                </div>
                 {e?.fix && <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{e.fix}</div>}
               </div>
             )
           })}
 
+          {canRun && (
+            <button onClick={onRun} disabled={healing}
+              style={{ marginTop: 12, width: '100%', height: 38, borderRadius: 'var(--radius-md)', cursor: healing ? 'wait' : 'pointer',
+                border: '1.5px solid var(--border-subtle)', background: 'transparent', color: 'var(--text-strong)', fontWeight: 600, fontFamily: 'var(--font-sans)' }}>
+              {healing ? 'กำลังดึงข้อมูล…' : 'ดึงข้อมูลตอนนี้'}
+            </button>
+          )}
           {canHeal && (
             <button onClick={onHeal} disabled={healing}
               style={{ marginTop: 12, width: '100%', height: 38, borderRadius: 'var(--radius-md)', cursor: healing ? 'wait' : 'pointer',

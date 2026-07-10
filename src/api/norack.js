@@ -230,6 +230,7 @@ export const getErrorCatalog = () => apiGet('/api/system/catalog')
 export const getSystemErrors = () => apiGet('/api/system/errors') // admin
 export const resolveSystemError = (id) => apiPost(`/api/system/errors/${id}/resolve`, {}) // admin
 export const healWebhook = () => apiPost('/api/system/webhook/heal', {}) // admin
+export const runWatcher = () => apiPost('/api/system/watch/run', {}) // admin — reconcile now, don't wait 4h
 
 /** Report a crash. Never throws and never blocks — a broken error reporter must not break the app. */
 export function reportClientError({ message, route, code }) {
