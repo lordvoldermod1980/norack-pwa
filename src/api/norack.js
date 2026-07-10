@@ -160,15 +160,21 @@ async function allCustomers() {
 }
 export function clearCustomerCache() { _custCache = null; _custCacheAt = 0 }
 
+// A Customer_ID is 13 digits + 5 hex chars. Roughly 1 in 10 of them (9.3% of our 3,091 customers) happen
+// to have an all-numeric hex part, i.e. an 18-digit id — so the id test MUST come before the phone test,
+// or those customers get looked up by phone blind-index, never match, and no bill can be opened for them.
+const CUST_ID_RE = /^\d{13}[0-9a-f]{5}$/
+const MAX_TEL_DIGITS = 12 // Thai numbers are 9–10; anything longer is an id, not a phone
+
 export async function customerLookup(q) {
   const s = String(q ?? '').trim()
   const digits = s.replace(/\D/g, '')
   let customers
-  if (digits.length >= 6 && /^[0-9\s-]+$/.test(s)) {
-    customers = (await apiGet(`/api/customers?tel=${encodeURIComponent(s)}`)).customers || []
-  } else if (/^\d{13}[0-9a-f]{5}$/.test(s)) {
+  if (CUST_ID_RE.test(s)) {
     const d = await apiGet(`/api/customers/${encodeURIComponent(s)}`)
     customers = d.customer ? [d.customer] : []
+  } else if (digits.length >= 6 && digits.length <= MAX_TEL_DIGITS && /^[0-9\s-]+$/.test(s)) {
+    customers = (await apiGet(`/api/customers?tel=${encodeURIComponent(s)}`)).customers || []
   } else {
     const all = await allCustomers()
     const ql = s.toLowerCase()
