@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, me
 import { getOpenBills, getBillStatus, updateStatus, customerLookup, openBill, uploadPhoto, updateBill, deleteBill, getBackend, setBackend, BACKEND_LABELS, getReview, syncCustomer, createCustomer, deleteCustomer, getStaffList, setStaffPerms, getLineWebhook, setLineWebhook, can, isAdmin, exportBackup, importPreview, importApply, signOut, currentUser } from '../api/norack'
 import Icon from '../components/Icon'
 import StatusBadge from '../components/StatusBadge'
+import SystemBadge from '../components/SystemBadge'
 import { toStatusKey } from '../lib/status'
 import PhotoThumb from '../components/PhotoThumb'
 import NRButton from '../components/NRButton'
@@ -143,7 +144,7 @@ function BackendSwitch() {
       style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px',
         background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
         border: `1.5px solid ${failedOver ? '#fbbf24' : 'rgba(255,255,255,0.25)'}` }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 }}>เว็บ</span>
+      <Icon name="cloud" size={17} color="rgba(255,255,255,0.8)" />
       <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flexShrink: 0, boxShadow: `0 0 0 3px ${dot}33` }} />
       <select value={sel} onChange={change} title="เลือกเซิร์ฟเวอร์"
         style={{ background: 'transparent', color: '#fff', border: 'none', outline: 'none', cursor: 'pointer',
@@ -189,7 +190,7 @@ function LineWebhookSwitch() {
       style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px',
         background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
         border: '1.5px solid rgba(255,255,255,0.25)', opacity: busy ? 0.55 : 1 }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 }}>LINE</span>
+      <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.4 }}>LINE</span>
       <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flexShrink: 0, boxShadow: `0 0 0 3px ${dot}33` }} />
       <select value={cur} onChange={change} disabled={busy || target === ''} title="สลับ backend ของบอท LINE (ทั้งระบบ)"
         style={{ background: 'transparent', color: '#fff', border: 'none', outline: 'none', cursor: busy ? 'wait' : 'pointer',
@@ -1511,6 +1512,7 @@ export default function TabletDashboard() {
                 background: 'rgba(255,255,255,0.12)', color: '#fff', outline: 'none' }} />
           </div>
         )}
+        <SystemBadge />
         <BackendSwitch />
         {isAdmin() && <LineWebhookSwitch />}
         <Clock />

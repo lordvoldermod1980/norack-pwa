@@ -222,6 +222,24 @@ export const setStaffPerms = (username, perms) => apiPost(`/api/admin/staff/${en
 export const getLineWebhook = () => apiGet('/api/admin/line-webhook')
 export const setLineWebhook = (target, force = false) => apiPost('/api/admin/line-webhook', { target, force })
 
+// ── system status ("ระบบ" badge) ───────────────────────────────────────────────
+// Cheap by design: the backend answers from a cache the watcher cron refreshes, never by calling Loyverse.
+// Every staff member may read it — knowing the system is healthy is not an admin privilege.
+export const getSystemStatus = () => apiGet('/api/system/status')
+export const getErrorCatalog = () => apiGet('/api/system/catalog')
+export const getSystemErrors = () => apiGet('/api/system/errors') // admin
+export const resolveSystemError = (id) => apiPost(`/api/system/errors/${id}/resolve`, {}) // admin
+export const healWebhook = () => apiPost('/api/system/webhook/heal', {}) // admin
+
+/** Report a crash. Never throws and never blocks — a broken error reporter must not break the app. */
+export function reportClientError({ message, route, code }) {
+  try {
+    return apiPost('/api/system/client-errors', { message: String(message ?? '').slice(0, 500), route, code }).catch(() => {})
+  } catch {
+    return Promise.resolve()
+  }
+}
+
 // ── backup export (Phase 10c) — full DB snapshot for the "สำรองข้อมูล" button ────
 // Returns { meta, sheets: { customers, bills, bill_positions } }, every cell a string (fidelity-safe).
 export const exportBackup = () => apiGet('/api/export/backup')
