@@ -111,6 +111,13 @@ async function apiCall(method, path, body) {
       lastErr = new Error(`HTTP ${r.status}`)
       continue
     }
+    // 409 use_backup_host: CF refuses jobs it cannot run in-request (the watcher pass exceeds the Workers
+    // subrequest cap; the webhook-heal pre-flight would be a blocked self-fetch) and hands us to Deno.
+    // Safe to replay even though it's a write: the refusing side did nothing. Other 409s pass through.
+    if (r.status === 409 && hasFallback) {
+      const e = await r.clone().json().catch(() => ({}))
+      if (e.error === 'use_backup_host') { lastErr = new Error('use_backup_host'); continue }
+    }
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
       throw new Error(e.error || `HTTP ${r.status}`)
