@@ -1238,6 +1238,15 @@ export default function TabletDashboard() {
     }, delay)
   }, [selCust, notify])
 
+  // Background cache refresh landed with ACTUAL changes (norack.js fires this only after a real full refetch,
+  // not on the cheap /meta no-op) → repaint the list from the now-fresh cache. Cheap: customerLookup hits the
+  // warm in-memory cache, no network. Only while the customer tab is showing.
+  useEffect(() => {
+    const onCustUpdate = () => { if (nav === 'customers') loadCustomers(custQ) }
+    window.addEventListener('norack-customers-updated', onCustUpdate)
+    return () => window.removeEventListener('norack-customers-updated', onCustUpdate)
+  }, [nav, custQ, loadCustomers])
+
   // auto-load customers when switching to customer tab
   const handleNav = (key) => {
     if (key === 'register' && nav === 'receive' && receiveRackId) {

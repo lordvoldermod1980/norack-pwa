@@ -24,6 +24,7 @@ export const isAuthed = () => !!getToken()
 export function logout() {
   localStorage.removeItem('norack_token')
   localStorage.removeItem('norack_user')
+  clearPersistedCustomerCache() // 🔒 wipe the on-device customer cache so decrypted PII never outlives the session
 }
 // Manual logout from the UI: clear the token and drop back to the login screen (AuthGate listens for this).
 export function signOut() {
@@ -40,6 +41,7 @@ export async function login(username, password) {
   if (!r.ok || !d.token) throw new Error(d.error || `เข้าสู่ระบบไม่สำเร็จ (${r.status})`)
   localStorage.setItem('norack_token', d.token)
   if (d.user) localStorage.setItem('norack_user', JSON.stringify(d.user))
+  prefetchCustomers() // warm the customer cache in the background so the ลูกค้า tab is ready before it's opened
   return d.user
 }
 export function currentUser() {
@@ -58,6 +60,7 @@ export async function refreshToken() {
     const d = await apiPost('/api/auth/refresh')
     if (d?.token) localStorage.setItem('norack_token', d.token)
     if (d?.user) localStorage.setItem('norack_user', JSON.stringify(d.user)) // pick up any role/perm change
+    prefetchCustomers() // app-load / tab-visible / periodic → keep the customer cache warm (cheap: delta-checked)
     return true
   } catch { return false }
 }
@@ -144,28 +147,151 @@ const custAlias = (c) => ({ ...c, phone: c.tel })
 // ── SSE removed (polling replaces it). Kept exported so old imports don't break. ──
 export const SSE_URL = ''
 
+// ── on-device cache (IndexedDB) ─────────────────────────────────────────────────
+// The decrypted customer list is cached on-device so the ลูกค้า tab opens instantly on a reload/cold-start
+// while the session is still valid. It is WIPED on logout/401/expiry (see logout()) so PII never lingers
+// past an active session. Every op swallows errors — a broken IndexedDB must NOT break the app; a miss just
+// falls back to the network (like before). One record, key 'customers', in DB `norack` / store `cache`.
+const IDB_NAME = 'norack'
+const IDB_STORE = 'cache'
+const CUST_CACHE_KEY = 'customers'
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    let req
+    try { req = indexedDB.open(IDB_NAME, 1) } catch (e) { return reject(e) }
+    req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE) }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+async function idbGet(key) {
+  try {
+    const db = await idbOpen()
+    return await new Promise((resolve) => {
+      const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key)
+      rq.onsuccess = () => resolve(rq.result ?? null)
+      rq.onerror = () => resolve(null)
+    })
+  } catch { return null }
+}
+async function idbSet(key, val) {
+  try {
+    const db = await idbOpen()
+    await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite')
+      tx.objectStore(IDB_STORE).put(val, key)
+      tx.oncomplete = resolve; tx.onerror = resolve; tx.onabort = resolve
+    })
+  } catch { /* ignore — best effort */ }
+}
+async function idbDel(key) {
+  try {
+    const db = await idbOpen()
+    await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite')
+      tx.objectStore(IDB_STORE).delete(key)
+      tx.oncomplete = resolve; tx.onerror = resolve; tx.onabort = resolve
+    })
+  } catch { /* ignore — best effort */ }
+}
+
 // ── customers ─────────────────────────────────────────────────────────────────
 // Phone-ish query → exact blind-index lookup. Anything else (name / id substring) → filter a cached full
 // list client-side (the backend intentionally has no server-side name search; names live encrypted).
-// TTL so customers created/renamed OUTSIDE this device (POS→webhook, another tablet) show up in search
-// within a minute — without it the cache only cleared on this device's own add/delete, i.e. never all day.
+//
+// The full list is expensive to fetch (paginated + server-side PII decrypt), so it is cached three ways:
+//   1. in-memory — instant within a session
+//   2. IndexedDB — survives reloads/cold-start so the tab opens instantly (wiped on logout)
+//   3. delta-checked revalidation — a cheap GET /api/customers/meta ({total,max_updated_at}) decides whether a
+//      full refetch is even needed, so the background refresh is nearly free when nobody changed anything.
+// CUST_CACHE_TTL_MS = how long in-memory data is treated as "fresh" (no revalidate). FULL_REFRESH_MS = a
+// safety net that forces a full refetch periodically in case a delta is ever missed (e.g. an edit stamped
+// with an older updated_at than the current max, total unchanged).
 const CUST_CACHE_TTL_MS = 60_000
+const FULL_REFRESH_MS = 10 * 60_000
 let _custCache = null
 let _custCacheAt = 0
-async function allCustomers() {
-  if (_custCache && Date.now() - _custCacheAt < CUST_CACHE_TTL_MS) return _custCache
-  const all = []
-  for (let offset = 0; ; offset += 500) {
-    const d = await apiGet(`/api/customers?limit=500&offset=${offset}`)
-    const batch = d.customers || []
+let _custMeta = null        // { total, max_updated_at } describing the cached list
+let _lastFullFetchAt = 0
+let _custHydrated = false    // have we tried IndexedDB yet this session?
+let _revalidating = null
+
+const maxUpdatedAt = (list) => list.reduce((m, c) => (c.updated_at && c.updated_at > m ? c.updated_at : m), '') || null
+
+// Fetch every page, firing pages 2..N in PARALLEL (the first response already tells us `total`) instead of the
+// old sequential waterfall (~7 round-trips for 3k customers). Browsers allow ~6 concurrent per origin and each
+// page is a separate Worker invocation, so there is no subrequest-cap concern (that's a server self-fetch limit).
+async function fetchAllPagesParallel() {
+  const first = await apiGet('/api/customers?limit=500&offset=0')
+  const all = first.customers || []
+  const total = Number(first.total ?? all.length)
+  if (all.length >= total) return all
+  const offsets = []
+  for (let o = 500; o < total; o += 500) offsets.push(o)
+  const pages = await Promise.all(offsets.map((o) => apiGet(`/api/customers?limit=500&offset=${o}`)))
+  for (const p of pages) all.push(...(p.customers || []))
+  // total may have grown while we fetched → top up sequentially until a short page proves we hit the end.
+  for (let o = (offsets.length ? offsets[offsets.length - 1] : 0) + 500; all.length < total; o += 500) {
+    const p = await apiGet(`/api/customers?limit=500&offset=${o}`)
+    const batch = p.customers || []
     all.push(...batch)
     if (batch.length < 500) break
   }
-  _custCache = all
-  _custCacheAt = Date.now()
   return all
 }
-export function clearCustomerCache() { _custCache = null; _custCacheAt = 0 }
+
+// Single-flight background refresh: delta-check first (cheap /meta), do the full parallel fetch ONLY when the
+// customer set actually changed (or the periodic safety net fires). Updates memory + IndexedDB and fires
+// `norack-customers-updated` so the UI can repaint with fresh data.
+function revalidateCustomers() {
+  if (_revalidating) return _revalidating
+  _revalidating = (async () => {
+    try {
+      const forceFull = !_custMeta || Date.now() - _lastFullFetchAt > FULL_REFRESH_MS
+      if (!forceFull) {
+        const meta = await apiGet('/api/customers/meta').catch(() => null) // unreachable / pre-/meta backend → treat as changed
+        // _custMeta may have been nulled mid-flight by a concurrent clearCustomerCache() (add/delete) → then
+        // fall through to a full fetch so the local change is picked up (and never read .total off null).
+        if (meta && _custMeta && meta.total === _custMeta.total && meta.max_updated_at === _custMeta.max_updated_at) {
+          _custCacheAt = Date.now() // nothing changed → mark fresh, skip the heavy refetch
+          return _custCache
+        }
+      }
+      const list = await fetchAllPagesParallel()
+      _custCache = list
+      _custCacheAt = Date.now()
+      _lastFullFetchAt = Date.now()
+      _custMeta = { total: list.length, max_updated_at: maxUpdatedAt(list) }
+      idbSet(CUST_CACHE_KEY, { list, savedAt: Date.now(), meta: _custMeta }) // best-effort, not awaited
+      if (isAuthed()) window.dispatchEvent(new Event('norack-customers-updated'))
+      return list
+    } finally {
+      _revalidating = null
+    }
+  })()
+  return _revalidating
+}
+
+async function allCustomers() {
+  if (_custCache && Date.now() - _custCacheAt < CUST_CACHE_TTL_MS) return _custCache // memory fresh
+  if (!_custCache && !_custHydrated) {                                              // hydrate from IndexedDB once
+    _custHydrated = true
+    const persisted = await idbGet(CUST_CACHE_KEY)
+    if (persisted?.list?.length) { _custCache = persisted.list; _custMeta = persisted.meta || null; _custCacheAt = 0 }
+  }
+  if (_custCache) { revalidateCustomers().catch(() => {}); return _custCache }       // stale-while-revalidate
+  return await revalidateCustomers()                                                // cold: nothing cached → wait
+}
+
+// Warm the cache in the background (best-effort) so the ลูกค้า tab + modal search boxes are ready before use.
+export function prefetchCustomers() { allCustomers().catch(() => {}) }
+
+// Force the next lookup to refetch the full list (called after a local add/delete so the change shows at once).
+// Skips the delta shortcut (_custMeta=null) so we get real fresh data, not a "nothing changed" from /meta.
+export function clearCustomerCache() { _custCache = null; _custCacheAt = 0; _custMeta = null; _custHydrated = true; revalidateCustomers().catch(() => {}) }
+
+// Wipe the on-device cache (memory + IndexedDB). Called on logout/401 so decrypted PII never outlives the session.
+function clearPersistedCustomerCache() { _custCache = null; _custCacheAt = 0; _custMeta = null; _custHydrated = false; idbDel(CUST_CACHE_KEY) }
 
 // A Customer_ID is 13 digits + 5 hex chars. Roughly 1 in 10 of them (9.3% of our 3,091 customers) happen
 // to have an all-numeric hex part, i.e. an 18-digit id — so the id test MUST come before the phone test,
