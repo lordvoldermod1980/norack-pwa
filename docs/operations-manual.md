@@ -1,6 +1,23 @@
 # NO.Rack — คู่มือการใช้งานระบบ (Operations Manual)
 
-> อัปเดตล่าสุด: 2026-06-21
+> ## ⚠️ อ่านก่อน — เอกสารนี้เขียนไว้ก่อน cutover (2026-06-21)
+>
+> **ส่วนที่ยังจริง:** ขั้นตอนการทำงานของพนักงาน — เปิดบิล → ถ่ายรูป → ซักเสร็จ → **คิดเงินที่ POS โดยใส่
+> Rack ID ในช่อง note ของใบเสร็จ** → สถานะเป็น "รับแล้ว" อัตโนมัติ · โซน/ราว · การย่อรูปก่อนอัป
+>
+> **ส่วนที่ไม่จริงแล้ว (ทั้งหมดของ §1 ภาพรวมระบบ):** ระบบ**ไม่ได้ใช้ n8n / Google Sheets / MinIO /
+> Cloudflare Access / SSE** อีกแล้วตั้งแต่ cutover 2026-07-06 · ของจริงตอนนี้คือ
+> **Hono API (CF Workers หลัก + Deno Deploy สำรอง) + Turso + Backblaze B2 + polling** และ login
+> เป็น **Bearer token ของแอปเอง** ไม่ใช่ CF Access
+>
+> 📍 **แหล่งความจริงปัจจุบัน:**
+> - โครงสร้างข้อมูล → [data-model.md](./data-model.md) (เขียนใหม่แล้ว)
+> - สถาปัตยกรรม/ดูแลระบบ/DR → Obsidian vault `web_db_oncloud/` (`[[web-db-oncloud]]`, `[[web-db-oncloud-maintenance]]`)
+> - API + schema → `[[web-db-oncloud-api]]`
+>
+> เก็บไฟล์นี้ไว้เพราะขั้นตอนหน้างานยังใช้ได้ และเป็นบันทึกว่าระบบเดิมทำงานอย่างไร (มีประโยชน์ตอนต้อง rollback)
+
+> อัปเดตล่าสุด: 2026-06-21 (เนื้อหาโครงสร้างพื้นฐาน = ยุค n8n)
 > คู่มือนี้อธิบาย **ภาพรวมระบบ + วิธีใช้งาน + การดูแล** — ค่า token/ความลับดูที่ `SECRETS.local.md` (gitignored) · ขั้นตอน credential/backup ดูที่ [credentials-and-backup-manual.md](./credentials-and-backup-manual.md)
 > 🔒 Spreadsheet ID / host จริงในเอกสารนี้ใช้ **placeholder** (`<...>`) — หาค่าจริงได้จากหัวข้อ **🔑 หาค่าจริงของ placeholder** ท้ายเอกสาร
 

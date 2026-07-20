@@ -1,6 +1,17 @@
 # NO.Rack — คู่มือ Credential & การสำรองข้อมูล
 
-> อัปเดต: 2026-06-21  
+> ## ⚠️ เอกสารยุคก่อน cutover — credential ในนี้เป็นของระบบเดิม (n8n / MinIO / Google Sheets)
+>
+> ระบบปัจจุบันใช้ **Turso + B2 + CF Workers/Deno** ซึ่งมีชุด secret คนละชุดกันทั้งหมด
+> - **secret ปัจจุบัน** → `D:\Project_Web_DB_Oncloud\SECRETS.local.md` (gitignored) + `.dev.vars`
+>   และตั้งบน CF (`wrangler secret`) / Deno dashboard — **ต้องตั้งให้ตรงกันทั้ง 2 runtime**
+> - **backup/restore ปัจจุบัน** → ปุ่ม "สำรองข้อมูล"/"กู้ข้อมูล" ในแอป (Phase 10)
+>   · รายละเอียด: vault `[[web-db-oncloud-maintenance]]` §Backup/Restore
+> - **ขอบเขตที่ backup ไปไม่ถึง: ไม่มีการ backup รูป** — Turso หายทั้งก้อน = ไฟล์ใน B2 ยังอยู่
+>   แต่ไม่มีแถวชี้ว่ารูปไหนของบิลไหน = orphan ถาวร
+>
+> เก็บไฟล์นี้ไว้เพราะยังต้องใช้ตอน **rollback ไป n8n** (ระบบเดิมถูกเก็บเป็น cold standby)
+
 > ค่า token จริงทั้งหมดอยู่ที่ `home-server/SECRETS.local.md` (gitignored) — ไฟล์นี้เป็น **ขั้นตอน** ไม่เก็บค่าลับ
 > 🔒 host ในตัวอย่าง curl (`<n8n-host>` / `<sse-host>`) เป็น placeholder — ค่าจริงดูตาราง "หาค่าจริงของ placeholder" ใน [operations-manual.md](./operations-manual.md)
 
