@@ -20,7 +20,28 @@ const baseUrl = (b) => BACKENDS[b] || BACKENDS.cf
 
 // ── auth (Bearer token in localStorage; old static-token model is gone) ──────────
 const getToken = () => localStorage.getItem('norack_token') || ''
-export const isAuthed = () => !!getToken()
+
+// Read `exp` out of our session token (format: base64url(payload).base64url(hmac) — see the backend's
+// src/auth/session.ts; it is NOT a 3-part JWT). The signature is deliberately not checked here — the
+// client has no secret and the backend re-verifies every request. This exists so a device that has been
+// offline past its session cannot keep rendering decrypted customers without ever talking to the server.
+// Unparseable → 0 → treated as expired (fail closed).
+function tokenExpiresAtMs(token) {
+  try {
+    const b64 = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')
+    const { exp } = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)))
+    return typeof exp === 'number' ? exp * 1000 : 0
+  } catch { return 0 }
+}
+export const isAuthed = () => { const t = getToken(); return !!t && tokenExpiresAtMs(t) > Date.now() }
+
+/** Drop an expired session (and its cached PII) before anything renders. Called by AuthGate on mount —
+ *  the 401 path only fires once a request is made, which an offline tablet never does. */
+export function enforceSessionExpiry() {
+  if (getToken() && !isAuthed()) { logout(); return false }
+  return isAuthed()
+}
+
 export function logout() {
   localStorage.removeItem('norack_token')
   localStorage.removeItem('norack_user')
@@ -209,6 +230,10 @@ async function idbDel(key) {
 // with an older updated_at than the current max, total unchanged).
 const CUST_CACHE_TTL_MS = 60_000
 const FULL_REFRESH_MS = 10 * 60_000
+// 🔒 Hard ceiling on how long decrypted PII may sit in IndexedDB, matching the backend's 7-day session
+// (src/routes/auth.ts TOKEN_TTL_SEC). logout() and a 401 wipe the cache; this covers the third case the
+// security rule names — plain expiry on a device that simply stopped being used.
+const CUST_PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000
 let _custCache = null
 let _custCacheAt = 0
 let _custMeta = null        // { total, max_updated_at } describing the cached list
@@ -277,7 +302,14 @@ async function allCustomers() {
   if (!_custCache && !_custHydrated) {                                              // hydrate from IndexedDB once
     _custHydrated = true
     const persisted = await idbGet(CUST_CACHE_KEY)
-    if (persisted?.list?.length) { _custCache = persisted.list; _custMeta = persisted.meta || null; _custCacheAt = 0 }
+    // Only adopt persisted PII while the session is still valid AND the snapshot is inside its TTL.
+    // Anything else is wiped rather than shown — an expired cache is a leak, not a performance win.
+    const fresh = persisted?.savedAt && Date.now() - persisted.savedAt < CUST_PERSIST_TTL_MS
+    if (persisted?.list?.length && fresh && isAuthed()) {
+      _custCache = persisted.list; _custMeta = persisted.meta || null; _custCacheAt = 0
+    } else if (persisted) {
+      idbDel(CUST_CACHE_KEY)
+    }
   }
   if (_custCache) { revalidateCustomers().catch(() => {}); return _custCache }       // stale-while-revalidate
   return await revalidateCustomers()                                                // cold: nothing cached → wait
@@ -418,7 +450,11 @@ export async function openBill(body) {
 export async function updateBill(body) {
   const { rack_id, ...rest } = body
   const patch = { ...rest }
-  for (const k of ['open_date', 'done_date', 'final_date']) if (k in patch) patch[k] = thaiToIso(patch[k])
+  // Send `null` (not '') for a cleared date. thaiToIso returns '' for an empty/unparseable field, and ''
+  // in a date column is worse than nothing: SQLite sorts it before every real date, so it reads as
+  // "expired" to anything doing a date comparison. The backend normalises this too (db/bills.ts) — this
+  // side just stops sending the bad shape in the first place.
+  for (const k of ['open_date', 'done_date', 'final_date']) if (k in patch) patch[k] = thaiToIso(patch[k]) || null
   return apiPost(`/api/bills/${encodeURIComponent(rack_id)}`, patch)
 }
 
@@ -439,10 +475,12 @@ export async function uploadPhoto(body) {
     seq: body.seq,
     ext,
   })
-  if (meta?.upload_url) {
-    const blob = await (await fetch(dataUrl)).blob()
-    const put = await fetch(meta.upload_url, { method: 'PUT', body: blob, headers: { 'Content-Type': mime } })
-    if (!put.ok) throw new Error(`อัปโหลดรูปไม่สำเร็จ (${put.status})`)
-  }
+  // No presigned URL means the bytes have nowhere to go. Throw instead of returning quietly: the caller
+  // renders "saved" on a resolved promise, so swallowing this reports success for a photo that was never
+  // stored (CLAUDE.md names "silent success" as a bug to guard against).
+  if (!meta?.upload_url) throw new Error('อัปโหลดรูปไม่สำเร็จ (เซิร์ฟเวอร์ไม่ได้ให้ที่เก็บรูป)')
+  const blob = await (await fetch(dataUrl)).blob()
+  const put = await fetch(meta.upload_url, { method: 'PUT', body: blob, headers: { 'Content-Type': mime } })
+  if (!put.ok) throw new Error(`อัปโหลดรูปไม่สำเร็จ (${put.status})`)
   return meta
 }

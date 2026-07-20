@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP is also served as a real header by CF Pages (public/_headers), but GitHub Pages — our DR host —
+         cannot send custom headers, so the same policy is embedded here. Without it the backup site would
+         serve a PII-handling app with no CSP at all. Keep the two in sync when either changes.
+         Caveats of the meta form: frame-ancestors and HSTS are header-only (github.io is HSTS-preloaded),
+         so X-Frame-Options/HSTS parity still comes from _headers on CF Pages. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://s3.us-west-004.backblazeb2.com; connect-src 'self' https://norack-api.winterarmy-homeserver.workers.dev https://norack-db-oncloud.lordvoldermod1980.deno.net https://s3.us-west-004.backblazeb2.com; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <title>NO.Rack</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

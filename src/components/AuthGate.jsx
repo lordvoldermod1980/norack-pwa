@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
-import { login, isAuthed, getBackend, setBackend, BACKEND_LABELS, refreshToken } from '../api/norack'
+import { login, getBackend, setBackend, BACKEND_LABELS, refreshToken, enforceSessionExpiry } from '../api/norack'
 
-// Wraps the app: shows a login screen until a Bearer token exists. Listens for `norack-unauth`
-// (fired by the API adapter on a 401) to drop back to login. See docs/phase6-frontend-cutover.md.
+// Wraps the app: shows a login screen until a VALID (unexpired) Bearer token exists. Listens for
+// `norack-unauth` (fired by the API adapter on a 401) to drop back to login. See docs/phase6-frontend-cutover.md.
 export default function AuthGate({ children }) {
-  const [authed, setAuthed] = useState(isAuthed())
+  // enforceSessionExpiry, not isAuthed: if the stored token has expired we must also wipe the cached
+  // customer PII here, because an offline device never gets the 401 that would otherwise do it.
+  const [authed, setAuthed] = useState(enforceSessionExpiry)
   useEffect(() => {
     const onUnauth = () => setAuthed(false)
     window.addEventListener('norack-unauth', onUnauth)
@@ -17,7 +19,9 @@ export default function AuthGate({ children }) {
     if (!authed) return
     let last = 0
     const MIN_GAP_MS = 60 * 60 * 1000
-    const slide = () => { last = Date.now(); refreshToken() }
+    // A failed slide is tolerated (offline shouldn't log anyone out), but if the token has actually run
+    // out by now, stop rendering the app — otherwise a tablet left open past the 7 days keeps showing PII.
+    const slide = async () => { last = Date.now(); await refreshToken(); if (!enforceSessionExpiry()) setAuthed(false) }
     slide()
     const onVisible = () => {
       if (document.visibilityState === 'visible' && Date.now() - last > MIN_GAP_MS) slide()

@@ -416,7 +416,6 @@ function OpenBillModal({ prefillCustId = '', onClose, onCreate }) {
   const [loyverseUuid, setLoyverseUuid]   = useState('')
   const [receiptNo, setReceiptNo]         = useState('')
   const [openDate, setOpenDate]           = useState(todayISO)
-  const [note, setNote]                   = useState('')
   const [submitting, setSubmitting]       = useState(false)
   const [error, setError]                 = useState('')
   const [result, setResult]               = useState(null)
@@ -452,18 +451,19 @@ function OpenBillModal({ prefillCustId = '', onClose, onCreate }) {
     setSubmitting(true)
     setError('')
     try {
+      // customer_name/customer_tel are NOT sent: bills are normalized to customer_id and the API layer
+      // discards them anyway (api/norack.js openBill) — sending them only implies they are stored.
       const data = await openBill({
         customer_id:    custMatch?.id || custInput.trim(),
-        customer_name:  custMatch?.name || '',
-        customer_tel:   custMatch?.tel || '',
         loyverse_uuid:  loyverseUuid.trim(),
         receipt_number: receiptNo.trim(),
         open_date:      thaiDate(openDate),
-        note:           note.trim(),
       })
+      // Same guard the done/edit modals use: a 200 carrying an error body must not render as success.
+      if (data && data.status === 'error') throw new Error(data.error || 'open failed')
       setResult(data)
-    } catch {
-      setError('เปิดบิลไม่สำเร็จ กรุณาลองใหม่')
+    } catch (e) {
+      setError(e?.message === 'unauthorized' ? 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' : 'เปิดบิลไม่สำเร็จ กรุณาลองใหม่')
     } finally { setSubmitting(false) }
   }
 
@@ -633,13 +633,8 @@ function OpenBillModal({ prefillCustId = '', onClose, onCreate }) {
               </div>
             </div>
 
-            {/* 7 · NOTE */}
-            <div style={{ marginBottom: 'var(--space-5)' }}>
-              <SectionLabel num="7" title="NOTE" sub="ถ้ามี (ไม่บังคับ)" />
-              <textarea value={note} onChange={e => setNote(e.target.value)}
-                placeholder="เช่น ซักพิเศษ, แยกถุง, หมายเหตุพิเศษ…" rows={2}
-                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: '1.5px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-body)', color: 'var(--text-body)', resize: 'none', outline: 'none', background: 'var(--surface-card)', fontFamily: 'var(--font-sans)' }} />
-            </div>
+            {/* NOTE ถูกถอดออก (2026-07-20): bills ไม่มีคอลัมน์ note — ที่พิมพ์ไว้ถูกทิ้งเงียบๆ มาตลอด
+                และหน้างานจริงจดหมายเหตุไว้ที่ Loyverse อยู่แล้ว */}
 
             {error && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 'var(--space-3)', marginBottom: 'var(--space-4)', background: 'var(--red-50)', border: '1px solid var(--red-500)', borderRadius: 'var(--radius-md)', color: 'var(--red-700)', fontSize: 'var(--fs-sub)' }}>
@@ -674,7 +669,6 @@ function DoneModal({ bill, detail, onClose, onSaved }) {
   const [selectedPositions, setSelectedPositions] = useState([])
   const [positionBags, setPositionBags] = useState({})
   const [doneDate, setDoneDate] = useState(todayISO)
-  const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -712,8 +706,11 @@ function DoneModal({ bill, detail, onClose, onSaved }) {
         positions:      selectedPositions.map(p => ({ zone: p.zone, slot: p.slot, bags: Number(positionBags[p.key]) || 0 })),
         open_date:      bill.opened || '',
         done_date:      thaiDate(doneDate),
-        final_date:     raw.final_date || '',
-        note:           note.trim(),
+        // final_date is echoed back ONLY when we actually have it. This modal marks a bill เสร็จสิ้น and
+        // has no business clearing the pickup date — sending the key with an empty value would tell the
+        // backend to wipe whatever is stored (the legacy "update wipes Final Date" bug), and a partial
+        // update leaves untouched what it never mentions.
+        ...(raw.final_date ? { final_date: raw.final_date } : {}),
       })
       if (res && res.status === 'error') throw new Error(res.error || 'update failed')
       onSaved()
@@ -808,15 +805,7 @@ function DoneModal({ bill, detail, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* NOTE */}
-          <div>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 8 }}>
-              NOTE <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(ถ้ามี)</span>
-            </label>
-            <textarea value={note} onChange={e => setNote(e.target.value)}
-              placeholder="เช่น ซักพิเศษ, แยกถุง…" rows={2}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', border: '1.5px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-body)', color: 'var(--text-body)', resize: 'none', outline: 'none', background: 'var(--surface-card)', fontFamily: 'var(--font-sans)' }} />
-          </div>
+          {/* NOTE ถูกถอดออก (2026-07-20) — ดูเหตุผลในโมดัลเปิดบิล */}
 
           {error && <div style={{ marginTop: 'var(--space-3)', fontSize: 'var(--fs-caption)', color: 'var(--red-700)', fontWeight: 600 }}>{error}</div>}
         </div>
@@ -2292,7 +2281,6 @@ const CustomerView = memo(function CustomerView({ bills, billCount, q, customers
 // ─── receive view ─────────────────────────────────────────────────────────────
 
 const CLOTH_CATS = ['ชุดทั่วไป', 'ชุดทำงาน', 'ชุดไหม', 'ผ้านวม', 'รีดอัดกลีบ']
-const MINIO_BASE = 'https://photos.winterarmy.net/norack/'
 
 function genTempId() {
   return 'TMP-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 5).toUpperCase()
@@ -2342,7 +2330,9 @@ function PhotoSlot({ index, photo, tempId, onCapture, onRemove }) {
         <input ref={fileRef}   type="file" accept="image/*"                       style={{ display: 'none' }} onChange={onPick} />
       </div>
       <div style={{ padding: '6px 12px', borderTop: '1px solid var(--border-subtle)', background: 'var(--surface-sunken)', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {MINIO_BASE + filename}
+        {/* filename only — photos live in a PRIVATE B2 bucket reached through short-lived presigned URLs,
+            so there is no browsable host to show (the old photos.winterarmy.net MinIO path is retired). */}
+        {filename}
       </div>
       {photo && (
         <div style={{ display: 'flex', borderTop: '1px solid var(--border-subtle)' }}>
@@ -2456,7 +2446,6 @@ function ReceiveView({ prefillRackId = '', prefillCustId = '' }) {
           cloth_category: category,
           cloth_type: '',
           seq: seq++,
-          note: '',
           photo: dataUrl,
         })
       }
