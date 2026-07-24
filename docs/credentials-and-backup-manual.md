@@ -44,6 +44,7 @@
 3. **Cloudflare Pages secret** ให้ตรงกัน (จาก `d:\Project_Webapp\norack-pwa`):
    ```bash
    printf '<token-ใหม่>' | wrangler pages secret put N8N_TOKEN --project-name norack-pwa
+   npm run build:pages   # ⚠️ ไม่ใช่ `npm run build` (นั่นคือ base ของ GitHub Pages → asset 404)
    wrangler pages deploy dist --project-name norack-pwa --branch main
    ```
 4. **Verify:**

@@ -155,9 +155,13 @@ n8n  (ผ่าน Cloudflare Tunnel: <n8n-host>)
 
 ### Webapp (norack-pwa)
 ```bash
-npm run build
+npm run build:pages    # ⚠️ ไม่ใช่ `npm run build` — ดูกล่องข้างล่าง
 npx wrangler pages deploy dist --project-name norack-pwa --branch main
 ```
+> ⚠️ **CF Pages ต้อง `build:pages` เท่านั้น** — `vite.config.js` ตั้ง `base: '/norack-pwa/'` ไว้ให้ GitHub Pages
+> (project page เสิร์ฟใต้ path นั้น) ส่วน CF Pages เสิร์ฟที่ root ⇒ ถ้า build ผิดตัว asset จะ 404 ทั้งเว็บ
+> `build:pages` = `vite build --base=/` · **GitHub Pages ไม่ต้อง deploy มือ** — push ขึ้น `main` แล้ว Actions ทำให้เอง
+
 > เว็บอยู่หลัง Cloudflare Access → curl จะโดน 302 (ปกติ) · ทดสอบจริงต้องเปิดในเบราว์เซอร์ที่ล็อกอินแล้ว · หลัง deploy ให้ **hard refresh / ปิด-เปิด PWA**
 
 ### Google Apps Script (generate Customer_ID)
