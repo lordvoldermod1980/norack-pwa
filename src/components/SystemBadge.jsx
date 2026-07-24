@@ -66,7 +66,17 @@ export default function SystemBadge({ pollMs = 30000 }) {
       setNote(`ดึงข้อมูลแล้ว: ${cu}${rc}`)
       setStatus(await getSystemStatus())
     } catch (e) {
-      setNote(`ดึงข้อมูลไม่สำเร็จ: ${e.message}`)
+      // Losing the response is not the same as the job failing: the pass runs to completion on the server
+      // and the browser cannot cancel it. Ask the server what actually happened rather than reporting a
+      // failure we never observed — a reconcile stamped in the last few minutes means the pass finished.
+      const s = await getSystemStatus().catch(() => null)
+      if (s) setStatus(s)
+      const ts = Date.parse(s?.last_reconcile_at ?? '')
+      if (Number.isFinite(ts) && Date.now() - ts < 5 * 60 * 1000) {
+        setNote('ดึงข้อมูลเสร็จแล้ว (เซิร์ฟเวอร์ตอบกลับช้า ไม่ได้ล้มเหลว)')
+      } else {
+        setNote(`ดึงข้อมูลไม่สำเร็จ: ${e.message}`)
+      }
     } finally { setHealing(false) }
   }
 

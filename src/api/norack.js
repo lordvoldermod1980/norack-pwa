@@ -92,9 +92,13 @@ export async function refreshToken() {
 // retrying the other runtime could double-apply. On the request that finally succeeds we announce the
 // effective backend (`norack-backend-active`) so the header can reveal a silent failover.
 const REQUEST_TIMEOUT_MS = 10000
+// The admin maintenance jobs (watcher pass, webhook heal) call Loyverse several times inside a single
+// request and routinely take 20-40s on a cold Deno isolate. On the normal 10s budget they ALWAYS abort
+// mid-flight and report a failure for work the server in fact completed, so they get their own budget.
+const ADMIN_JOB_TIMEOUT_MS = 60000
 const announceBackend = (b) => window.dispatchEvent(new CustomEvent('norack-backend-active', { detail: b }))
 
-async function apiCall(method, path, body) {
+async function apiCall(method, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
   const token = getToken()
   const order = getBackend() === 'deno' ? ['deno', 'cf'] : ['cf', 'deno']
   const isWrite = method !== 'GET' && method !== 'HEAD'
@@ -103,7 +107,7 @@ async function apiCall(method, path, body) {
     const b = order[i]
     const hasFallback = i < order.length - 1
     const ctl = new AbortController()
-    const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS)
+    const timer = setTimeout(() => ctl.abort(), timeoutMs)
     let r
     try {
       r = await fetch(`${baseUrl(b)}${path}`, {
@@ -152,7 +156,7 @@ async function apiCall(method, path, body) {
   throw lastErr || new Error('ติดต่อเซิร์ฟเวอร์ไม่ได้ทั้งสองที่')
 }
 const apiGet = (p) => apiCall('GET', p)
-const apiPost = (p, b) => apiCall('POST', p, b)
+const apiPost = (p, b, timeoutMs) => apiCall('POST', p, b, timeoutMs)
 
 // ── transforms ───────────────────────────────────────────────────────────────
 // bill: ISO dates → พ.ศ. so the UI (which shows/inputs พ.ศ.) keeps working unchanged.
@@ -394,8 +398,9 @@ export const getSystemStatus = () => apiGet('/api/system/status')
 export const getErrorCatalog = () => apiGet('/api/system/catalog')
 export const getSystemErrors = () => apiGet('/api/system/errors') // admin
 export const resolveSystemError = (id) => apiPost(`/api/system/errors/${id}/resolve`, {}) // admin
-export const healWebhook = () => apiPost('/api/system/webhook/heal', {}) // admin
-export const runWatcher = () => apiPost('/api/system/watch/run', {}) // admin — reconcile now, don't wait 4h
+export const healWebhook = () => apiPost('/api/system/webhook/heal', {}, ADMIN_JOB_TIMEOUT_MS) // admin
+// admin — reconcile now, don't wait 4h. Long budget: the pass is 4 Loyverse jobs in one request.
+export const runWatcher = () => apiPost('/api/system/watch/run', {}, ADMIN_JOB_TIMEOUT_MS)
 
 /** Report a crash. Never throws and never blocks — a broken error reporter must not break the app. */
 export function reportClientError({ message, route, code }) {
